@@ -1,0 +1,160 @@
+/* @import url() FONT IMPORTS MUST ALWAYS BE AT THE VERY TOP OF THIS FILE, ABOVE THE TAILWIND IMPORTS — DO NOT DELETE THIS COMMENT */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap');
+
+/* CRITICAL: THE FOLLOWING TAILWIND IMPORTS MUST NEVER BE DELETED OR REORDERED — DO NOT DELETE THIS COMMENT */
+@import 'tailwindcss/base';
+@import 'tailwindcss/components';
+@import 'tailwindcss/utilities';
+
+/* END TAILWIND IMPORTS — ALL OTHER CSS MUST GO BELOW THIS LINE */
+
+@layer base {
+  :root {
+    --background: hsl(0 0% 100%);
+    --foreground: hsl(222.2 47.4% 11.2%);
+    --muted: hsl(210 40% 96.1%);
+    --muted-foreground: hsl(215.4 16.3% 46.9%);
+    --popover: hsl(0 0% 100%);
+    --popover-foreground: hsl(222.2 47.4% 11.2%);
+    --border: hsl(214.3 31.8% 91.4%);
+    --input: hsl(214.3 31.8% 91.4%);
+    --card: hsl(0 0% 100%);
+    --card-foreground: hsl(222.2 47.4% 11.2%);
+    --primary: hsl(222.2 47.4% 11.2%);
+    --primary-foreground: hsl(210 40% 98%);
+    --secondary: hsl(210 40% 96.1%);
+    --secondary-foreground: hsl(222.2 47.4% 11.2%);
+    --accent: hsl(210 40% 96.1%);
+    --accent-foreground: hsl(222.2 47.4% 11.2%);
+    --destructive: hsl(0 100% 50%);
+    --destructive-foreground: hsl(210 40% 98%);
+    --ring: hsl(215 20.2% 65.1%);
+    --radius: 0.5rem;
+  }
+  :root[class~="dark"] {
+    --background: hsl(224 71% 4%);
+    --foreground: hsl(213 31% 91%);
+    --muted: hsl(223 47% 11%);
+    --muted-foreground: hsl(215.4 16.3% 56.9%);
+    --accent: hsl(216 34% 17%);
+    --accent-foreground: hsl(210 40% 98%);
+    --popover: hsl(224 71% 4%);
+    --popover-foreground: hsl(215 20.2% 65.1%);
+    --border: hsl(216 34% 17%);
+    --input: hsl(216 34% 17%);
+    --card: hsl(224 71% 4%);
+    --card-foreground: hsl(213 31% 91%);
+    --primary: hsl(210 40% 98%);
+    --primary-foreground: hsl(222.2 47.4% 1.2%);
+    --secondary: hsl(222.2 47.4% 11.2%);
+    --secondary-foreground: hsl(210 40% 98%);
+    --destructive: hsl(0 63% 31%);
+    --destructive-foreground: hsl(210 40% 98%);
+    --ring: hsl(216 34% 17%);
+    --radius: 0.5rem;
+  }
+  * {
+    border-color: var(--border);
+  }
+  body {
+    @apply bg-gray-50 text-gray-900 transition-colors duration-300;
+    font-family: 'Inter', sans-serif;
+  }
+  .dark body,
+  body.dark {
+    @apply bg-[#0a0f1a] text-gray-100;
+  }
+  h1, h2, h3, h4, h5, h6 {
+    @apply tracking-tight;
+    font-family: 'Inter', sans-serif;
+  }
+}
+.hero-pattern {
+  background-color: #134e4a;
+  background-image: radial-gradient(#0f766e 1px, transparent 1px);
+  background-size: 24px 24px;
+}
+.dark .hero-pattern {
+  background-color: #042f2e;
+  background-image: radial-gradient(#115e59 1px, transparent 1px);
+}
+/* Custom Scrollbar */
+.custom-scrollbar::-webkit-scrollbar {
+  width: 6px;
+}
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  @apply bg-gray-300 rounded-full;
+}
+.dark .custom-scrollbar::-webkit-scrollbar-thumb {
+  @apply bg-gray-600;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  @apply bg-gray-400;
+}
+.dark .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  @apply bg-gray-500;
+}
+/* Animated border for course detail */
+@keyframes rotateBorder {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+.animateB {
+  position: relative;
+  overflow: hidden;
+  z-index: 0;
+  border-radius: 2rem;
+  will-change: transform;
+  transition: all 0.3s ease-out;
+  backface-visibility: hidden;
+  perspective: 1000px;
+}
+.animateB::before {
+  content: "";
+  position: absolute;
+  z-index: -2;
+  left: -50%;
+  top: -50%;
+  width: 200%;
+  height: 200%;
+  background: conic-gradient(
+    transparent,
+    #002afc22,
+    #0faff45a,
+    transparent 40%,
+    transparent 50%,
+    #00ff732b,
+    #2ae7959a,
+    transparent 90%
+  );
+  animation: rotateBorder 6s linear infinite;
+}
+.animateB::after {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  left: 3px;
+  top: -1px;
+  right: 3px;
+  bottom: -1px;
+  background: inherit;
+  border-radius: calc(2rem - 3px);
+}
+/* Speaking animation */
+@keyframes speakingPulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.4); }
+  50% { box-shadow: 0 0 0 12px rgba(34, 197, 94, 0); }
+}
+.speaking-animation {
+  animation: speakingPulse 1.5s ease-in-out infinite;
+}
+/* Screen share styles */
+.screen-share-container {
+  position: relative;
+  border-radius: 1rem;
+  overflow: hidden;
+  background: #000;
+}
