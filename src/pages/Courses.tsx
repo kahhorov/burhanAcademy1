@@ -178,7 +178,7 @@ export function Courses() {
         setJoining(false);
         return;
       }
-      if (!currentJoined.includes(user.uid)) {
+      if (!isAdmin && !isTeacher && !currentJoined.includes(user.uid)) {
         await setDoc(
           doc(db, "settings", "onlineClass"),
           {

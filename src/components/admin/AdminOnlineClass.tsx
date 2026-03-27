@@ -1,10 +1,16 @@
 import React, { useEffect, useState } from 'react';
 import { Radio, Users, Settings, Play, Square, Eye } from 'lucide-react';
-import { doc, setDoc, onSnapshot } from 'firebase/firestore';
+import { deleteField, doc, onSnapshot, setDoc } from 'firebase/firestore';
 import { db } from '../../lib/firebase';
 import { toast } from 'sonner';
 import { motion } from 'framer-motion';
 import { useNavigate } from 'react-router-dom';
+
+const createSessionId = () =>
+  typeof crypto !== 'undefined' && 'randomUUID' in crypto
+    ? crypto.randomUUID()
+    : `session-${Date.now()}`;
+
 interface AdminOnlineClassProps {
   users: any[];
 }
@@ -65,10 +71,14 @@ export function AdminOnlineClass({ users }: AdminOnlineClassProps) {
         doc(db, 'settings', 'onlineClass'),
         {
           isActive: newStatus,
-          joinedUsers: newStatus ? [] : settings.joinedUsers,
-          kickedUsers: newStatus ? [] : settings.kickedUsers,
-          participantStates: newStatus ? {} : {},
-          chatMessages: newStatus ? [] : []
+          joinedUsers: [],
+          kickedUsers: [],
+          participantStates: {},
+          chatMessages: [],
+          sessionId: newStatus ? createSessionId() : deleteField(),
+          screenSharerId: deleteField(),
+          screenShareStreamId: deleteField(),
+          signals: deleteField()
         },
         {
           merge: true
@@ -85,7 +95,10 @@ export function AdminOnlineClass({ users }: AdminOnlineClassProps) {
     }
   };
   // Build joined users list with real-time participant state data
-  const joinedUsersList = settings.joinedUsers.map((uid) => {
+  const participantIds = Array.from(
+    new Set([...settings.joinedUsers, ...Object.keys(settings.participantStates)])
+  );
+  const joinedUsersList = participantIds.map((uid) => {
     const firestoreUser = users.find((u) => u.id === uid);
     const participantState = settings.participantStates[uid] || {};
     return {
@@ -231,7 +244,7 @@ export function AdminOnlineClass({ users }: AdminOnlineClassProps) {
               <Users className="w-5 h-5" /> Qatnashuvchilar
             </h3>
             <span className="bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400 px-3 py-1 rounded-full text-sm font-bold">
-              {settings.joinedUsers.length} / {settings.limit}
+              {joinedUsersList.length} / {settings.limit}
             </span>
           </div>
           <div className="space-y-3 max-h-[400px] overflow-y-auto pr-2">

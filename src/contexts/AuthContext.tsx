@@ -1,4 +1,4 @@
-import React, { useEffect, useState, createContext, useContext } from 'react';
+import React, { useEffect, useState, createContext, useContext } from "react";
 import {
   User,
   signInWithPopup,
@@ -10,18 +10,18 @@ import {
   updateEmail,
   updatePassword,
   EmailAuthProvider,
-  reauthenticateWithCredential } from
-'firebase/auth';
+  reauthenticateWithCredential,
+} from "firebase/auth";
 import {
   doc,
   getDoc,
   setDoc,
   updateDoc,
   serverTimestamp,
-  onSnapshot } from
-'firebase/firestore';
-import { auth, googleProvider, db } from '../lib/firebase';
-import { toast } from 'sonner';
+  onSnapshot,
+} from "firebase/firestore";
+import { auth, googleProvider, db } from "../lib/firebase";
+import { toast } from "sonner";
 interface AuthContextType {
   user: User | null;
   loading: boolean;
@@ -36,20 +36,20 @@ interface AuthContextType {
   login: () => Promise<void>;
   loginWithEmail: (email: string, pass: string) => Promise<void>;
   registerWithEmail: (
-  email: string,
-  pass: string,
-  name: string)
-  => Promise<void>;
+    email: string,
+    pass: string,
+    name: string,
+  ) => Promise<void>;
   logout: () => Promise<void>;
   refreshUserData: () => Promise<void>;
   updateAdminCredentials: (
-  currentPassword: string,
-  newEmail?: string,
-  newPassword?: string)
-  => Promise<void>;
+    currentPassword: string,
+    newEmail?: string,
+    newPassword?: string,
+  ) => Promise<void>;
 }
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
-export function AuthProvider({ children }: {children: React.ReactNode;}) {
+export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
   const [isAdmin, setIsAdmin] = useState(false);
@@ -63,44 +63,44 @@ export function AuthProvider({ children }: {children: React.ReactNode;}) {
   const checkPremiumExpiration = async (userId: string, expiresAt: any) => {
     if (!expiresAt) return false;
     const now = new Date();
-    const expirationDate = expiresAt.toDate ?
-    expiresAt.toDate() :
-    new Date(expiresAt);
+    const expirationDate = expiresAt.toDate
+      ? expiresAt.toDate()
+      : new Date(expiresAt);
     if (now > expirationDate) {
       try {
-        await updateDoc(doc(db, 'users', userId), {
+        await updateDoc(doc(db, "users", userId), {
           isPremium: false,
-          premiumExpiresAt: null
+          premiumExpiresAt: null,
         });
         toast.info("Premium ta'rifingiz muddati tugadi.");
         return true;
       } catch (e) {
-        console.error('Failed to update expired premium', e);
+        console.error("Failed to update expired premium", e);
       }
     }
     return false;
   };
   const fetchUserData = async (currentUser: User) => {
     try {
-      const userDocRef = doc(db, 'users', currentUser.uid);
+      const userDocRef = doc(db, "users", currentUser.uid);
       const userDoc = await getDoc(userDocRef);
       const isUserAdmin =
-      currentUser.email === 'maqsadjon@gmail.com' ||
-      userDoc.exists() && userDoc.data().isAdmin === true;
+        currentUser.email === "maqsadjon@gmail.com" ||
+        (userDoc.exists() && userDoc.data().isAdmin === true);
       const isUserTeacher =
-      userDoc.exists() && userDoc.data().isTeacher === true;
+        userDoc.exists() && userDoc.data().isTeacher === true;
       setIsAdmin(isUserAdmin);
       setIsTeacher(isUserTeacher);
       if (userDoc.exists()) {
         const data = userDoc.data();
         if (data.isBlocked) {
           await signOut(auth);
-          toast.error('Sizning hisobingiz bloklangan. Tizimga kira olmaysiz.', {
+          toast.error("Sizning hisobingiz bloklangan. Tizimga kira olmaysiz.", {
             style: {
-              background: '#fee2e2',
-              color: '#991b1b',
-              border: '1px solid #f87171'
-            }
+              background: "#fee2e2",
+              color: "#991b1b",
+              border: "1px solid #f87171",
+            },
           });
           setUser(null);
           setIsBlocked(true);
@@ -111,7 +111,7 @@ export function AuthProvider({ children }: {children: React.ReactNode;}) {
         if (currentPremiumStatus && data.premiumExpiresAt) {
           const isExpired = await checkPremiumExpiration(
             currentUser.uid,
-            data.premiumExpiresAt
+            data.premiumExpiresAt,
           );
           if (isExpired) currentPremiumStatus = false;
         }
@@ -119,31 +119,31 @@ export function AuthProvider({ children }: {children: React.ReactNode;}) {
         setPremiumExpiresAt(data.premiumExpiresAt || null);
         setPurchasedCourses(data.purchasedCourses || []);
         setHasOnlineClassAccess(data.hasOnlineClassAccess || false);
-        if (currentUser.email === 'maqsadjon@gmail.com' && !data.isAdmin) {
+        if (currentUser.email === "maqsadjon@gmail.com" && !data.isAdmin) {
           try {
             await updateDoc(userDocRef, {
-              isAdmin: true
+              isAdmin: true,
             });
           } catch (e) {
-            console.warn('Could not update admin flag:', e);
+            console.warn("Could not update admin flag:", e);
           }
         }
       } else {
         try {
           await setDoc(userDocRef, {
             email: currentUser.email,
-            displayName: currentUser.displayName || '',
-            photoURL: currentUser.photoURL || '',
+            displayName: currentUser.displayName || "",
+            photoURL: currentUser.photoURL || "",
             isPremium: false,
             purchasedCourses: [],
             hasOnlineClassAccess: false,
             isAdmin: isUserAdmin,
             isTeacher: false,
             isBlocked: false,
-            createdAt: serverTimestamp()
+            createdAt: serverTimestamp(),
           });
         } catch (e) {
-          console.warn('Could not create user doc:', e);
+          console.warn("Could not create user doc:", e);
         }
         setIsPremium(false);
         setPurchasedCourses([]);
@@ -151,8 +151,8 @@ export function AuthProvider({ children }: {children: React.ReactNode;}) {
         setIsBlocked(false);
       }
     } catch (error: any) {
-      console.warn('Error fetching user data:', error);
-      if (currentUser.email === 'maqsadjon@gmail.com') setIsAdmin(true);
+      console.warn("Error fetching user data:", error);
+      if (currentUser.email === "maqsadjon@gmail.com") setIsAdmin(true);
       setIsPremium(false);
       setPurchasedCourses([]);
       setHasOnlineClassAccess(false);
@@ -166,7 +166,7 @@ export function AuthProvider({ children }: {children: React.ReactNode;}) {
         if (!isBlocked) {
           setUser(currentUser);
           unsubscribeSnapshot = onSnapshot(
-            doc(db, 'users', currentUser.uid),
+            doc(db, "users", currentUser.uid),
             async (docSnap) => {
               if (docSnap.exists()) {
                 const data = docSnap.data();
@@ -174,12 +174,12 @@ export function AuthProvider({ children }: {children: React.ReactNode;}) {
                   signOut(auth);
                   setUser(null);
                   setIsBlocked(true);
-                  toast.error('Sizning hisobingiz bloklandi.', {
+                  toast.error("Sizning hisobingiz bloklandi.", {
                     style: {
-                      background: '#fee2e2',
-                      color: '#991b1b',
-                      border: '1px solid #f87171'
-                    }
+                      background: "#fee2e2",
+                      color: "#991b1b",
+                      border: "1px solid #f87171",
+                    },
                   });
                 } else {
                   setIsBlocked(false);
@@ -188,7 +188,7 @@ export function AuthProvider({ children }: {children: React.ReactNode;}) {
                   if (currentPremiumStatus && data.premiumExpiresAt) {
                     const isExpired = await checkPremiumExpiration(
                       currentUser.uid,
-                      data.premiumExpiresAt
+                      data.premiumExpiresAt,
                     );
                     if (isExpired) currentPremiumStatus = false;
                   }
@@ -198,7 +198,7 @@ export function AuthProvider({ children }: {children: React.ReactNode;}) {
                   setHasOnlineClassAccess(data.hasOnlineClassAccess || false);
                 }
               }
-            }
+            },
           );
         }
       } else {
@@ -224,18 +224,18 @@ export function AuthProvider({ children }: {children: React.ReactNode;}) {
     try {
       const res = await signInWithPopup(auth, googleProvider);
       await fetchUserData(res.user);
-      if (!isBlocked) toast.success('Muvaffaqiyatli kirdingiz');
+      if (!isBlocked) toast.success("Muvaffaqiyatli kirdingiz");
     } catch (error: any) {
       console.error(error);
-      if (error.code === 'auth/unauthorized-domain') {
+      if (error.code === "auth/unauthorized-domain") {
         toast.error(
-          'Google login uchun domenni Firebase Console da ruxsat bering.'
+          "Google login uchun domenni Firebase Console da ruxsat bering.",
         );
       } else if (
-      error.code !== 'auth/popup-closed-by-user' &&
-      error.code !== 'auth/cancelled-popup-request')
-      {
-        toast.error('Google orqali kirishda xatolik yuz berdi');
+        error.code !== "auth/popup-closed-by-user" &&
+        error.code !== "auth/cancelled-popup-request"
+      ) {
+        toast.error("Google orqali kirishda xatolik yuz berdi");
       }
       throw error;
     }
@@ -244,77 +244,77 @@ export function AuthProvider({ children }: {children: React.ReactNode;}) {
     try {
       const res = await signInWithEmailAndPassword(auth, email, pass);
       await fetchUserData(res.user);
-      if (!isBlocked) toast.success('Muvaffaqiyatli kirdingiz');
+      if (!isBlocked) toast.success("Muvaffaqiyatli kirdingiz");
     } catch (error: any) {
       console.error(error);
       if (
-      error.code === 'auth/user-not-found' ||
-      error.code === 'auth/invalid-credential')
-      {
+        error.code === "auth/user-not-found" ||
+        error.code === "auth/invalid-credential"
+      ) {
         toast.error("Email yoki parol noto'g'ri.");
       } else {
-        toast.error('Tizimga kirishda xatolik yuz berdi.');
+        toast.error("Tizimga kirishda xatolik yuz berdi.");
       }
       throw error;
     }
   };
   const registerWithEmail = async (
-  email: string,
-  pass: string,
-  name: string) =>
-  {
+    email: string,
+    pass: string,
+    name: string,
+  ) => {
     try {
       const userCredential = await createUserWithEmailAndPassword(
         auth,
         email,
-        pass
+        pass,
       );
       await updateProfile(userCredential.user, {
-        displayName: name
+        displayName: name,
       });
-      await setDoc(doc(db, 'users', userCredential.user.uid), {
+      await setDoc(doc(db, "users", userCredential.user.uid), {
         email: email,
         displayName: name,
         isPremium: false,
         purchasedCourses: [],
         hasOnlineClassAccess: false,
-        isAdmin: email === 'maqsadjon@gmail.com',
+        isAdmin: email === "maqsadjon@gmail.com",
         isTeacher: false,
         isBlocked: false,
-        createdAt: serverTimestamp()
+        createdAt: serverTimestamp(),
       });
       setUser(auth.currentUser);
       setIsPremium(false);
       setPurchasedCourses([]);
       setHasOnlineClassAccess(false);
-      if (email === 'maqsadjon@gmail.com') setIsAdmin(true);
+      if (email === "maqsadjon@gmail.com") setIsAdmin(true);
       toast.success("Muvaffaqiyatli ro'yxatdan o'tdingiz");
     } catch (error: any) {
       console.error(error);
-      if (error.code === 'auth/email-already-in-use')
-      toast.error("Bu email allaqachon ro'yxatdan o'tgan");else
-      if (error.code === 'auth/weak-password')
-      toast.error("Parol kamida 6 ta belgidan iborat bo'lishi kerak");else
-      toast.error("Ro'yxatdan o'tishda xatolik");
+      if (error.code === "auth/email-already-in-use")
+        toast.error("Bu email allaqachon ro'yxatdan o'tgan");
+      else if (error.code === "auth/weak-password")
+        toast.error("Parol kamida 6 ta belgidan iborat bo'lishi kerak");
+      else toast.error("Ro'yxatdan o'tishda xatolik");
       throw error;
     }
   };
   const updateAdminCredentials = async (
-  currentPassword: string,
-  newEmail?: string,
-  newPassword?: string) =>
-  {
-    if (!user || !user.email) throw new Error('Foydalanuvchi topilmadi');
+    currentPassword: string,
+    newEmail?: string,
+    newPassword?: string,
+  ) => {
+    if (!user || !user.email) throw new Error("Foydalanuvchi topilmadi");
     try {
       const credential = EmailAuthProvider.credential(
         user.email,
-        currentPassword
+        currentPassword,
       );
       await reauthenticateWithCredential(user, credential);
       if (newEmail && newEmail !== user.email) {
         await updateEmail(user, newEmail);
-        await updateDoc(doc(db, 'users', user.uid), {
-          email: newEmail
+        await updateDoc(doc(db, "users", user.uid), {
+          email: newEmail,
         });
       }
       if (newPassword) {
@@ -325,15 +325,15 @@ export function AuthProvider({ children }: {children: React.ReactNode;}) {
       toast.success("Ma'lumotlar muvaffaqiyatli yangilandi");
     } catch (error: any) {
       console.error(error);
-      throw new Error('Xatolik yuz berdi: ' + error.message);
+      throw new Error("Xatolik yuz berdi: " + error.message);
     }
   };
   const logout = async () => {
     try {
       await signOut(auth);
-      toast.success('Tizimdan chiqdingiz');
+      toast.success("Tizimdan chiqdingiz");
     } catch (error) {
-      toast.error('Chiqishda xatolik yuz berdi');
+      toast.error("Chiqishda xatolik yuz berdi");
     }
   };
   return (
@@ -354,16 +354,16 @@ export function AuthProvider({ children }: {children: React.ReactNode;}) {
         registerWithEmail,
         logout,
         refreshUserData,
-        updateAdminCredentials
-      }}>
-
+        updateAdminCredentials,
+      }}
+    >
       {children}
-    </AuthContext.Provider>);
-
+    </AuthContext.Provider>
+  );
 }
 export const useAuth = () => {
   const context = useContext(AuthContext);
   if (context === undefined)
-  throw new Error('useAuth must be used within an AuthProvider');
+    throw new Error("useAuth must be used within an AuthProvider");
   return context;
 };

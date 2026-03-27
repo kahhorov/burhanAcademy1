@@ -29,6 +29,8 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { motion, AnimatePresence } from "framer-motion";
+import { VideoPlayer } from "../components/ui/video-player";
+
 export function LessonView() {
   const { lessonId } = useParams();
   const { user, refreshUserData } = useAuth();
