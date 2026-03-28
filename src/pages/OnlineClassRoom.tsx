@@ -31,7 +31,7 @@ import { toast } from "sonner";
 
 const SOCKET_URL =
   (import.meta as { env: Record<string, string> }).env.VITE_SOCKET_URL ??
-  "http://localhost:4000";
+  "https://burhanacademybackend.onrender.com";
 
 const RTC_CONFIG: RTCConfiguration = {
   iceServers: [
