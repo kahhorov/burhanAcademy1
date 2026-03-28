@@ -1,15 +1,16 @@
+/**
+ * OnlineClassRoom.tsx — TO'LIQ TUZATILGAN
+ *
+ * ASOSIY TUZATISH:
+ * Xonaga YANGI kirgan foydalanuvchi har bir MAVJUD peer'ga OFFER yuboradi.
+ * Mavjud peer'lar esa ANSWER bilan javob beradi.
+ * Ikki tomon ham PC yaratadi lekin offer faqat BIR tomondan ketadi.
+ */
+
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
-import {
-  arrayRemove,
-  arrayUnion,
-  deleteField,
-  doc,
-  onSnapshot,
-  setDoc,
-} from "firebase/firestore";
-import { db } from "../lib/firebase";
+import { io, Socket } from "socket.io-client";
 import {
   Camera,
   Maximize2,
@@ -26,86 +27,52 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 
+// ─── Config ───────────────────────────────────────────────────────────────────
+
+const SOCKET_URL =
+  (import.meta as { env: Record<string, string> }).env.VITE_SOCKET_URL ??
+  "http://localhost:4000";
+
+const RTC_CONFIG: RTCConfiguration = {
+  iceServers: [
+    { urls: "stun:stun.l.google.com:19302" },
+    { urls: "stun:stun1.l.google.com:19302" },
+    { urls: "stun:stun2.l.google.com:19302" },
+    { urls: "stun:stun3.l.google.com:19302" },
+  ],
+  iceCandidatePoolSize: 10,
+};
+
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-interface ParticipantState {
-  displayName?: string;
-  email?: string;
-  photoURL?: string;
-  isMuted?: boolean;
-  isVideoOff?: boolean;
-  isAdmin?: boolean;
-  isTeacher?: boolean;
-  isSpeaking?: boolean;
-}
-
-interface Participant {
+interface RemotePeer {
+  socketId: string;
   uid: string;
   displayName: string;
   photoURL: string;
-  isMuted: boolean;
-  isVideoOff: boolean;
   isAdmin: boolean;
   isTeacher: boolean;
-  isSpeaking: boolean;
+  isMuted: boolean;
+  isVideoOff: boolean;
+  isScreenSharing: boolean;
+  isSpeaking?: boolean;
+  screenStreamId?: string | null;
 }
 
-interface OnlineClassState {
-  isActive?: boolean;
-  joinedUsers?: string[];
-  kickedUsers?: string[];
-  participantStates?: Record<string, ParticipantState>;
-  sessionId?: string;
-  screenSharerId?: string;
-  screenShareStreamId?: string;
-  signals?: Record<string, Record<string, RoomSignal>>;
-}
-
-interface RoomSignal {
-  from: string;
-  to: string;
-  sessionId: string;
-  createdAt: number;
-  description?: RTCSessionDescriptionInit;
-  candidate?: RTCIceCandidateInit;
-}
-
-interface PeerEntry {
+interface PCEntry {
   pc: RTCPeerConnection;
-  polite: boolean;
-  makingOffer: boolean;
-  ignoreOffer: boolean;
-  settingAnswer: boolean;
-  pendingCandidates: RTCIceCandidateInit[];
-  // Senders — camera/mic
   audioSender: RTCRtpSender | null;
   videoSender: RTCRtpSender | null;
-  // Sender — screen share (alohida track)
   screenSender: RTCRtpSender | null;
+  // Bu peer offer yuboradimi yoki kutadimi
+  isOfferer: boolean;
+  makingOffer: boolean;
+  streams: Map<string, MediaStream>;
 }
 
-// uid → streamId → MediaStream
-type RemoteStreams = Record<string, Record<string, MediaStream>>;
-
-// ─── Constants ────────────────────────────────────────────────────────────────
-
-const onlineClassDocRef = doc(db, "settings", "onlineClass");
-
-const rtcConfig: RTCConfiguration = {
-  iceServers: [
-    { urls: ["stun:stun.l.google.com:19302", "stun:stun1.l.google.com:19302"] },
-  ],
-};
+type RemoteStreamsMap = Map<string, Map<string, MediaStream>>;
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
-
-const createSessionId = () =>
-  typeof crypto !== "undefined" && "randomUUID" in crypto
-    ? crypto.randomUUID()
-    : `session-${Date.now()}`;
-
-const createSignalId = (from: string, to: string) =>
-  `${from}_${to}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 
 const getName = (
   displayName?: string | null,
@@ -113,29 +80,24 @@ const getName = (
   fallback = "Foydalanuvchi",
 ) => displayName || email?.split("@")[0] || fallback;
 
-// ─── MediaView ────────────────────────────────────────────────────────────────
+// ─── VideoEl ─────────────────────────────────────────────────────────────────
 
-function MediaView({
+function VideoEl({
   stream,
   muted,
   className,
 }: {
   stream: MediaStream | null;
   muted: boolean;
-  className: string;
+  className?: string;
 }) {
   const ref = useRef<HTMLVideoElement>(null);
 
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
-    el.srcObject = stream ?? null;
-    if (stream) {
-      el.play().catch(() => undefined);
-    }
-    return () => {
-      if (el.srcObject === stream) el.srcObject = null;
-    };
+    if (el.srcObject !== stream) el.srcObject = stream;
+    if (stream) el.play().catch(() => undefined);
   }, [stream]);
 
   return (
@@ -146,136 +108,135 @@ function MediaView({
 // ─── ParticipantTile ─────────────────────────────────────────────────────────
 
 function ParticipantTile({
-  participant,
-  stream,
+  peer,
+  cameraStream,
   isLocal,
   isSharing,
   featured = false,
   nameOverride,
   className,
 }: {
-  participant: Participant;
-  stream: MediaStream | null;
+  peer: RemotePeer;
+  cameraStream: MediaStream | null;
   isLocal: boolean;
   isSharing: boolean;
   featured?: boolean;
   nameOverride?: string;
   className?: string;
 }) {
-  // Camera video track mavjud va enabled bo'lsa ko'rsatamiz
-  const hasCameraTrack = Boolean(
-    stream?.getVideoTracks().some((t) => t.readyState === "live"),
+  const name = nameOverride ?? (isLocal ? "Siz" : peer.displayName);
+  const subtitle = peer.isAdmin ? "Admin" : peer.isTeacher ? "Ustoz" : "Talaba";
+
+  const hasLiveVideo = Boolean(
+    cameraStream
+      ?.getVideoTracks()
+      .some((t) => t.readyState === "live" && t.enabled),
   );
-  const showVideo = hasCameraTrack && !participant.isVideoOff;
-  const name = nameOverride ?? (isLocal ? "Siz" : participant.displayName);
-  const subtitle = participant.isAdmin
-    ? "Admin"
-    : participant.isTeacher
-      ? "Ustoz"
-      : "Talaba";
+  const showVideo = !peer.isVideoOff && hasLiveVideo;
 
   return (
     <div
-      className={`relative overflow-hidden rounded-3xl border border-white/10 bg-[#162033]
-        ${featured ? "min-h-[320px] md:min-h-[460px]" : "min-h-[180px] md:min-h-[220px]"}
-        ${participant.isSpeaking ? "ring-2 ring-emerald-400/80" : ""}
-        ${className ?? ""}`}
+      className={[
+        "relative overflow-hidden rounded-3xl border border-white/10 bg-[#162033]",
+        featured
+          ? "min-h-[320px] md:min-h-[460px]"
+          : "min-h-[180px] md:min-h-[220px]",
+        peer.isSpeaking ? "ring-2 ring-emerald-400/80" : "",
+        className ?? "",
+      ]
+        .filter(Boolean)
+        .join(" ")}
     >
-      {/* Video — har doim mount qilingan, visibility CSS bilan */}
-      {stream && (
-        <MediaView
-          stream={stream}
-          muted={isLocal}
-          className={`absolute inset-0 h-full w-full object-cover transition-opacity duration-300 ${
-            showVideo ? "opacity-100" : "opacity-0"
-          }`}
-        />
-      )}
-
-      {/* Gradient overlay */}
-      <div
-        className={`absolute inset-0 ${
-          showVideo
-            ? "bg-gradient-to-t from-black/70 via-black/10 to-transparent"
-            : "bg-[radial-gradient(circle_at_top,#1d3159,transparent_55%),linear-gradient(135deg,#162033,#0f1729)]"
-        }`}
+      <VideoEl
+        stream={cameraStream}
+        muted={isLocal}
+        className={[
+          "absolute inset-0 h-full w-full object-cover transition-opacity duration-200",
+          showVideo ? "opacity-100" : "opacity-0 pointer-events-none",
+        ].join(" ")}
       />
 
-      {/* Avatar (video yo'q bo'lganda) */}
+      <div
+        className={[
+          "absolute inset-0",
+          showVideo
+            ? "bg-gradient-to-t from-black/70 via-transparent to-transparent"
+            : "bg-[radial-gradient(ellipse_at_top,#1d3159_0%,transparent_60%),linear-gradient(150deg,#162033,#0e1525)]",
+        ].join(" ")}
+      />
+
       {!showVideo && (
         <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 px-4 text-center">
           <div
-            className={`flex items-center justify-center overflow-hidden rounded-full font-bold
-              ${featured ? "h-24 w-24 text-4xl" : "h-20 w-20 text-3xl"}
-              ${
-                participant.isAdmin || participant.isTeacher
-                  ? "bg-gradient-to-br from-blue-500 to-cyan-500 text-white"
-                  : "bg-white/10 text-white"
-              }`}
+            className={[
+              "flex items-center justify-center overflow-hidden rounded-full font-bold shadow-lg",
+              featured ? "h-24 w-24 text-4xl" : "h-16 w-16 text-2xl",
+              peer.isAdmin || peer.isTeacher
+                ? "bg-gradient-to-br from-blue-500 to-cyan-400 text-white"
+                : "bg-white/10 text-white",
+            ].join(" ")}
           >
-            {participant.photoURL ? (
+            {peer.photoURL ? (
               <img
-                src={participant.photoURL}
-                alt={participant.displayName}
+                src={peer.photoURL}
+                alt={name}
                 className="h-full w-full object-cover"
                 onError={(e) => {
-                  (e.target as HTMLImageElement).style.display = "none";
+                  (e.currentTarget as HTMLImageElement).style.display = "none";
                 }}
               />
             ) : (
-              participant.displayName.charAt(0).toUpperCase()
+              name.charAt(0).toUpperCase()
             )}
           </div>
           <div>
-            <p className="font-semibold text-white">{name}</p>
-            <p className="text-sm text-gray-400">
-              {participant.isVideoOff ? "Kamera o'chiq" : "Ulanmoqda..."}
+            <p className="text-sm font-semibold text-white">{name}</p>
+            <p className="mt-0.5 text-xs text-gray-400">
+              {peer.isVideoOff ? "Kamera o'chiq" : "Ulanmoqda..."}
             </p>
           </div>
         </div>
       )}
 
-      {/* Badges */}
-      <div className="absolute left-4 top-4 flex flex-wrap gap-2">
-        {(participant.isAdmin || participant.isTeacher) && (
-          <span className="flex items-center gap-1 rounded-full bg-blue-500/20 px-3 py-1 text-[11px] font-semibold text-blue-100">
-            <ShieldAlert className="h-3.5 w-3.5" />
-            {participant.isAdmin ? "Admin" : "Ustoz"}
+      <div className="absolute left-3 top-3 flex flex-wrap gap-1.5">
+        {(peer.isAdmin || peer.isTeacher) && (
+          <span className="flex items-center gap-1 rounded-full bg-blue-600/30 px-2.5 py-1 text-[10px] font-semibold text-blue-100 backdrop-blur">
+            <ShieldAlert className="h-3 w-3" />
+            {peer.isAdmin ? "Admin" : "Ustoz"}
           </span>
         )}
         {isSharing && (
-          <span className="flex items-center gap-1 rounded-full bg-cyan-500/20 px-3 py-1 text-[11px] font-semibold text-cyan-100">
-            <MonitorUp className="h-3.5 w-3.5" />
+          <span className="flex items-center gap-1 rounded-full bg-cyan-600/30 px-2.5 py-1 text-[10px] font-semibold text-cyan-100 backdrop-blur">
+            <MonitorUp className="h-3 w-3" />
             Screen
           </span>
         )}
       </div>
 
-      {/* Name + mic/video icons */}
-      <div className="absolute bottom-4 left-4 right-4 flex items-end justify-between gap-3">
-        <div className="min-w-0 rounded-2xl bg-black/45 px-4 py-3 backdrop-blur">
-          <p className="truncate text-sm font-semibold text-white">{name}</p>
-          <p className="text-xs text-gray-300">{subtitle}</p>
+      <div className="absolute bottom-3 left-3 right-3 flex items-end justify-between gap-2">
+        <div className="min-w-0 rounded-xl bg-black/50 px-3 py-2 backdrop-blur">
+          <p className="truncate text-xs font-semibold text-white">{name}</p>
+          <p className="text-[10px] text-gray-300">{subtitle}</p>
         </div>
-        <div className="flex gap-2 rounded-2xl bg-black/45 px-3 py-2 backdrop-blur">
-          <div
-            className={`rounded-full p-2 ${participant.isMuted ? "text-red-300" : "text-emerald-300"}`}
+        <div className="flex gap-1 rounded-xl bg-black/50 px-2 py-2 backdrop-blur">
+          <span
+            className={`p-1 ${peer.isMuted ? "text-red-400" : "text-emerald-400"}`}
           >
-            {participant.isMuted ? (
-              <MicOff className="h-4 w-4" />
+            {peer.isMuted ? (
+              <MicOff className="h-3.5 w-3.5" />
             ) : (
-              <Mic className="h-4 w-4" />
+              <Mic className="h-3.5 w-3.5" />
             )}
-          </div>
-          <div
-            className={`rounded-full p-2 ${participant.isVideoOff ? "text-red-300" : "text-emerald-300"}`}
+          </span>
+          <span
+            className={`p-1 ${peer.isVideoOff ? "text-red-400" : "text-emerald-400"}`}
           >
-            {participant.isVideoOff ? (
-              <VideoOff className="h-4 w-4" />
+            {peer.isVideoOff ? (
+              <VideoOff className="h-3.5 w-3.5" />
             ) : (
-              <Video className="h-4 w-4" />
+              <Video className="h-3.5 w-3.5" />
             )}
-          </div>
+          </span>
         </div>
       </div>
     </div>
@@ -287,19 +248,22 @@ function ParticipantTile({
 function TeacherPlaceholder({ compact = false }: { compact?: boolean }) {
   return (
     <div
-      className={`relative overflow-hidden rounded-3xl border border-white/10
-        bg-[radial-gradient(circle_at_top,#243a6d,transparent_50%),linear-gradient(135deg,#162033,#0f1729)]
-        ${compact ? "min-h-[180px] md:min-h-[220px]" : "min-h-[320px] md:min-h-[460px]"}`}
+      className={[
+        "relative overflow-hidden rounded-3xl border border-white/10",
+        "bg-[radial-gradient(ellipse_at_top,#243a6d_0%,transparent_55%),linear-gradient(150deg,#162033,#0e1525)]",
+        compact
+          ? "min-h-[180px] md:min-h-[220px]"
+          : "min-h-[320px] md:min-h-[460px]",
+      ].join(" ")}
     >
-      <div className="absolute inset-0 bg-gradient-to-t from-black/50 via-transparent to-transparent" />
       <div className="absolute inset-0 flex flex-col items-center justify-center gap-4 px-6 text-center">
-        <div className="flex h-24 w-24 items-center justify-center rounded-full bg-gradient-to-br from-blue-500 to-cyan-500 text-white shadow-[0_16px_40px_rgba(0,0,0,0.35)]">
-          <ShieldAlert className="h-10 w-10" />
+        <div className="flex h-20 w-20 items-center justify-center rounded-full bg-gradient-to-br from-blue-500 to-cyan-400 text-white shadow-2xl">
+          <ShieldAlert className="h-9 w-9" />
         </div>
         <div>
-          <p className="text-2xl font-semibold text-white">Ustoz</p>
-          <p className="mt-2 max-w-md text-sm leading-6 text-slate-300">
-            Kamera yoqilganda yoki ekran ulashilganda shu yerda ko'rinadi.
+          <p className="text-xl font-semibold text-white">Ustoz</p>
+          <p className="mt-1.5 max-w-xs text-sm text-slate-400">
+            Kamera yoki ekran yoqilganda ko'rinadi
           </p>
         </div>
       </div>
@@ -313,620 +277,459 @@ export function OnlineClassRoom() {
   const { user, isAdmin, isTeacher } = useAuth();
   const navigate = useNavigate();
 
-  // ── UI state ──
   const [isMuted, setIsMuted] = useState(true);
   const [isVideoOff, setIsVideoOff] = useState(true);
   const [isScreenSharing, setIsScreenSharing] = useState(false);
   const [isInitializing, setIsInitializing] = useState(false);
   const [permissionError, setPermissionError] = useState<string | null>(null);
-  const [roomReady, setRoomReady] = useState(false);
-  const [showUserList, setShowUserList] = useState(() =>
-    typeof window !== "undefined" ? window.innerWidth >= 1280 : true,
+  const [connected, setConnected] = useState(false);
+  const [presenterMinimized, setPresenterMinimized] = useState(false);
+  const [showUserList, setShowUserList] = useState(
+    () => typeof window !== "undefined" && window.innerWidth >= 1280,
   );
-  const [isPresenterMinimized, setIsPresenterMinimized] = useState(false);
 
-  // ── Data state ──
-  const [onlineClass, setOnlineClass] = useState<OnlineClassState | null>(null);
-  const [participants, setParticipants] = useState<Participant[]>([]);
-
-  // ── Media state ──
+  const [remotePeers, setRemotePeers] = useState<Map<string, RemotePeer>>(
+    new Map(),
+  );
+  const [remoteStreams, setRemoteStreams] = useState<RemoteStreamsMap>(
+    new Map(),
+  );
+  const [screenSharerId, setScreenSharerId] = useState<string | null>(null);
+  const [screenShareStreamId, setScreenShareStreamId] = useState<string | null>(
+    null,
+  );
   const [localStream, setLocalStream] = useState<MediaStream | null>(null);
   const [screenStream, setScreenStream] = useState<MediaStream | null>(null);
-  const [remoteStreams, setRemoteStreams] = useState<RemoteStreams>({});
 
   // ── Refs ──
-  const onlineClassRef = useRef<OnlineClassState | null>(null);
-  const localStreamRef = useRef<MediaStream | null>(null);
-  const screenStreamRef = useRef<MediaStream | null>(null);
-  const peersRef = useRef<Record<string, PeerEntry>>({});
-  const processedSignalsRef = useRef<Set<string>>(new Set());
-  const mediaPromiseRef = useRef<Promise<MediaStream | null> | null>(null);
-  const previousSessionIdRef = useRef<string | null>(null);
-  const isMutedRef = useRef(true);
-  const isVideoOffRef = useRef(true);
+  const socketRef = useRef<Socket | null>(null);
+  const mySocketIdRef = useRef<string | null>(null);
+  const localRef = useRef<MediaStream | null>(null);
+  const screenRef = useRef<MediaStream | null>(null);
+  const mutedRef = useRef(true);
+  const videoOffRef = useRef(true);
+  const pcsRef = useRef<Map<string, PCEntry>>(new Map());
+  const mediaPromRef = useRef<Promise<MediaStream | null> | null>(null);
 
-  // ── Speaking detection refs ──
-  const audioContextRef = useRef<AudioContext | null>(null);
+  // Speaking detection
+  const audioCtxRef = useRef<AudioContext | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
-  const sourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
-  const frameRef = useRef<number | null>(null);
+  const audioSrcRef = useRef<MediaStreamAudioSourceNode | null>(null);
+  const rafRef = useRef<number | null>(null);
 
-  // ── Sync refs ──
   useEffect(() => {
-    onlineClassRef.current = onlineClass;
-  }, [onlineClass]);
-  useEffect(() => {
-    localStreamRef.current = localStream;
-  }, [localStream]);
-  useEffect(() => {
-    screenStreamRef.current = screenStream;
-  }, [screenStream]);
-  useEffect(() => {
-    isMutedRef.current = isMuted;
+    mutedRef.current = isMuted;
   }, [isMuted]);
   useEffect(() => {
-    isVideoOffRef.current = isVideoOff;
+    videoOffRef.current = isVideoOff;
   }, [isVideoOff]);
+  useEffect(() => {
+    localRef.current = localStream;
+  }, [localStream]);
+  useEffect(() => {
+    screenRef.current = screenStream;
+  }, [screenStream]);
 
-  // ═══════════════════════════════════════════════════════════════════════════
-  // SPEAKING DETECTION
-  // ═══════════════════════════════════════════════════════════════════════════
+  // ── Remote stream helpers ────────────────────────────────────────────────
 
-  const resetSpeaking = useCallback(() => {
-    if (frameRef.current) {
-      cancelAnimationFrame(frameRef.current);
-      frameRef.current = null;
-    }
-    sourceRef.current?.disconnect();
-    analyserRef.current?.disconnect();
-    sourceRef.current = null;
-    analyserRef.current = null;
-    if (audioContextRef.current && audioContextRef.current.state !== "closed") {
-      void audioContextRef.current.close().catch(() => undefined);
-    }
-    audioContextRef.current = null;
+  const addRemoteStream = useCallback((sid: string, stream: MediaStream) => {
+    setRemoteStreams((prev) => {
+      const next = new Map(prev);
+      const m = new Map(next.get(sid) ?? []);
+      m.set(stream.id, stream);
+      next.set(sid, m);
+      return next;
+    });
   }, []);
 
-  const updateSpeakingState = useCallback(
-    async (speaking: boolean) => {
-      if (!user || !onlineClassRef.current?.isActive) return;
-      try {
-        await setDoc(
-          onlineClassDocRef,
-          {
-            [`participantStates.${user.uid}.isSpeaking`]: speaking,
-          },
-          { merge: true },
-        );
-      } catch {
-        /* ignore */
-      }
-    },
-    [user],
-  );
+  const dropRemoteStream = useCallback((sid: string, streamId: string) => {
+    setRemoteStreams((prev) => {
+      const next = new Map(prev);
+      const m = new Map(next.get(sid) ?? []);
+      m.delete(streamId);
+      if (m.size === 0) next.delete(sid);
+      else next.set(sid, m);
+      return next;
+    });
+  }, []);
 
-  const detectSpeaking = useCallback(
+  const dropAllRemoteStreams = useCallback((sid: string) => {
+    setRemoteStreams((prev) => {
+      const next = new Map(prev);
+      next.delete(sid);
+      return next;
+    });
+  }, []);
+
+  // ── Speaking detection ───────────────────────────────────────────────────
+
+  const stopSpeaking = useCallback(() => {
+    if (rafRef.current) {
+      cancelAnimationFrame(rafRef.current);
+      rafRef.current = null;
+    }
+    audioSrcRef.current?.disconnect();
+    analyserRef.current?.disconnect();
+    audioSrcRef.current = null;
+    analyserRef.current = null;
+    if (audioCtxRef.current?.state !== "closed") {
+      audioCtxRef.current?.close().catch(() => undefined);
+    }
+    audioCtxRef.current = null;
+  }, []);
+
+  const startSpeaking = useCallback(
     (stream: MediaStream) => {
       if (!stream.getAudioTracks().length) return;
-      const AudioContextCtor =
+      const Ctx =
         window.AudioContext ||
-        (window as Window & { webkitAudioContext?: typeof AudioContext })
-          .webkitAudioContext;
-      if (!AudioContextCtor) return;
-      resetSpeaking();
+        (
+          window as unknown as {
+            webkitAudioContext: typeof AudioContext;
+          }
+        ).webkitAudioContext;
+      if (!Ctx) return;
+      stopSpeaking();
       try {
-        audioContextRef.current = new AudioContextCtor();
-        analyserRef.current = audioContextRef.current.createAnalyser();
-        analyserRef.current.minDecibels = -90;
-        analyserRef.current.maxDecibels = -10;
-        analyserRef.current.smoothingTimeConstant = 0.85;
-        sourceRef.current =
-          audioContextRef.current.createMediaStreamSource(stream);
-        sourceRef.current.connect(analyserRef.current);
-        const size = analyserRef.current.frequencyBinCount;
-        const data = new Uint8Array(size);
-        let wasSpeaking = false;
+        audioCtxRef.current = new Ctx();
+        analyserRef.current = audioCtxRef.current.createAnalyser();
+        analyserRef.current.smoothingTimeConstant = 0.8;
+        audioSrcRef.current =
+          audioCtxRef.current.createMediaStreamSource(stream);
+        audioSrcRef.current.connect(analyserRef.current);
+        const buf = new Uint8Array(analyserRef.current.frequencyBinCount);
+        let prev = false;
         const tick = () => {
           if (!analyserRef.current) return;
-          if (isMutedRef.current) {
-            if (wasSpeaking) {
-              wasSpeaking = false;
-              void updateSpeakingState(false);
+          if (mutedRef.current) {
+            if (prev) {
+              prev = false;
+              socketRef.current?.emit("state-update", { isSpeaking: false });
             }
-            frameRef.current = requestAnimationFrame(tick);
+            rafRef.current = requestAnimationFrame(tick);
             return;
           }
-          analyserRef.current.getByteFrequencyData(data);
-          let total = 0;
-          for (let i = 0; i < size; i++) total += data[i];
-          const speaking = total / size > 10;
-          if (speaking !== wasSpeaking) {
-            wasSpeaking = speaking;
-            void updateSpeakingState(speaking);
+          analyserRef.current.getByteFrequencyData(buf);
+          const avg = buf.reduce((s, v) => s + v, 0) / buf.length;
+          const now = avg > 12;
+          if (now !== prev) {
+            prev = now;
+            socketRef.current?.emit("state-update", { isSpeaking: now });
           }
-          frameRef.current = requestAnimationFrame(tick);
+          rafRef.current = requestAnimationFrame(tick);
         };
         tick();
       } catch (e) {
-        console.error("Speaking detector:", e);
+        console.error("Speaking detect:", e);
       }
     },
-    [resetSpeaking, updateSpeakingState],
+    [stopSpeaking],
   );
 
-  // ═══════════════════════════════════════════════════════════════════════════
-  // PARTICIPANT STATE
-  // ═══════════════════════════════════════════════════════════════════════════
+  // ── Track sync ───────────────────────────────────────────────────────────
 
-  const updateParticipantState = useCallback(
-    async (overrides?: {
-      isMuted?: boolean;
-      isVideoOff?: boolean;
-      isSpeaking?: boolean;
-    }) => {
-      if (!user || !onlineClassRef.current?.isActive) return;
-      const stream = localStreamRef.current;
-      const hasAudio = Boolean(stream?.getAudioTracks().length);
-      const hasVideo = Boolean(stream?.getVideoTracks().length);
+  const syncTracks = useCallback((entry: PCEntry) => {
+    const cam = localRef.current;
+    const scr = screenRef.current;
+
+    // Audio
+    const audioTrack = cam?.getAudioTracks()[0] ?? null;
+    if (audioTrack) {
+      if (!entry.audioSender) {
+        entry.audioSender = entry.pc.addTrack(audioTrack, cam!);
+      } else if (entry.audioSender.track !== audioTrack) {
+        void entry.audioSender.replaceTrack(audioTrack);
+      }
+    } else if (entry.audioSender) {
       try {
-        await setDoc(
-          onlineClassDocRef,
-          {
-            [`participantStates.${user.uid}`]: {
-              displayName: getName(
-                user.displayName,
-                user.email,
-                isAdmin ? "Admin" : isTeacher ? "Ustoz" : "Foydalanuvchi",
-              ),
-              email: user.email || "",
-              photoURL: user.photoURL || "",
-              isMuted:
-                overrides?.isMuted ?? (hasAudio ? isMutedRef.current : true),
-              isVideoOff:
-                overrides?.isVideoOff ??
-                (hasVideo ? isVideoOffRef.current : true),
-              isAdmin: Boolean(isAdmin),
-              isTeacher: Boolean(isTeacher),
-              isSpeaking: overrides?.isSpeaking ?? false,
-            },
-          },
-          { merge: true },
-        );
-      } catch (e) {
-        console.error("Participant state:", e);
+        entry.pc.removeTrack(entry.audioSender);
+      } catch {
+        /**/
       }
-    },
-    [isAdmin, isTeacher, user],
-  );
-
-  const patchLocalParticipant = useCallback(
-    (patch: Partial<Participant>) => {
-      if (!user) return;
-      setParticipants((prev) =>
-        prev.map((p) => (p.uid === user.uid ? { ...p, ...patch } : p)),
-      );
-    },
-    [user],
-  );
-
-  // ═══════════════════════════════════════════════════════════════════════════
-  // REMOTE STREAMS
-  // ═══════════════════════════════════════════════════════════════════════════
-
-  const setRemoteStream = useCallback((uid: string, stream: MediaStream) => {
-    setRemoteStreams((prev) => ({
-      ...prev,
-      [uid]: { ...(prev[uid] ?? {}), [stream.id]: stream },
-    }));
-  }, []);
-
-  const removeRemoteStream = useCallback((uid: string, streamId: string) => {
-    setRemoteStreams((prev) => {
-      if (!prev[uid]?.[streamId]) return prev;
-      const next = { ...prev };
-      const userStreams = { ...prev[uid] };
-      delete userStreams[streamId];
-      if (Object.keys(userStreams).length) next[uid] = userStreams;
-      else delete next[uid];
-      return next;
-    });
-  }, []);
-
-  // ═══════════════════════════════════════════════════════════════════════════
-  // SIGNALING
-  // ═══════════════════════════════════════════════════════════════════════════
-
-  const sendSignal = useCallback(
-    async (
-      to: string,
-      payload: {
-        description?: RTCSessionDescriptionInit;
-        candidate?: RTCIceCandidateInit;
-      },
-    ) => {
-      if (!user || !onlineClassRef.current?.sessionId) return;
-      const signalId = createSignalId(user.uid, to);
-      const data: RoomSignal = {
-        from: user.uid,
-        to,
-        sessionId: onlineClassRef.current.sessionId,
-        createdAt: Date.now(),
-        ...(payload.description ? { description: payload.description } : {}),
-        ...(payload.candidate ? { candidate: payload.candidate } : {}),
-      };
-      try {
-        await setDoc(
-          onlineClassDocRef,
-          { [`signals.${to}.${signalId}`]: data },
-          { merge: true },
-        );
-      } catch (e) {
-        console.error("Signal send:", e);
-      }
-    },
-    [user],
-  );
-
-  // ═══════════════════════════════════════════════════════════════════════════
-  // PEER CONNECTIONS
-  // ═══════════════════════════════════════════════════════════════════════════
-
-  const closePeer = useCallback((uid: string) => {
-    const peer = peersRef.current[uid];
-    if (!peer) return;
-    peer.pc.onicecandidate = null;
-    peer.pc.onnegotiationneeded = null;
-    peer.pc.ontrack = null;
-    peer.pc.onconnectionstatechange = null;
-    try {
-      peer.pc.close();
-    } catch {
-      /* ignore */
+      entry.audioSender = null;
     }
-    delete peersRef.current[uid];
-    setRemoteStreams((prev) => {
-      if (!prev[uid]) return prev;
-      const next = { ...prev };
-      delete next[uid];
-      return next;
-    });
+
+    // Camera video
+    const videoTrack = cam?.getVideoTracks()[0] ?? null;
+    if (videoTrack) {
+      if (!entry.videoSender) {
+        entry.videoSender = entry.pc.addTrack(videoTrack, cam!);
+      } else if (entry.videoSender.track !== videoTrack) {
+        void entry.videoSender.replaceTrack(videoTrack);
+      }
+    } else if (entry.videoSender) {
+      try {
+        entry.pc.removeTrack(entry.videoSender);
+      } catch {
+        /**/
+      }
+      entry.videoSender = null;
+    }
+
+    // Screen share
+    const screenTrack = scr?.getVideoTracks()[0] ?? null;
+    if (screenTrack) {
+      if (!entry.screenSender) {
+        entry.screenSender = entry.pc.addTrack(screenTrack, scr!);
+      }
+    } else if (entry.screenSender) {
+      try {
+        entry.pc.removeTrack(entry.screenSender);
+      } catch {
+        /**/
+      }
+      entry.screenSender = null;
+    }
   }, []);
 
-  const closeAllPeers = useCallback(() => {
-    Object.keys(peersRef.current).forEach(closePeer);
-  }, [closePeer]);
+  // ── PC lifecycle ─────────────────────────────────────────────────────────
+
+  const closePC = useCallback(
+    (sid: string) => {
+      const e = pcsRef.current.get(sid);
+      if (!e) return;
+      e.pc.onicecandidate = null;
+      e.pc.onnegotiationneeded = null;
+      e.pc.ontrack = null;
+      e.pc.onconnectionstatechange = null;
+      e.pc.oniceconnectionstatechange = null;
+      try {
+        e.pc.close();
+      } catch {
+        /**/
+      }
+      pcsRef.current.delete(sid);
+      dropAllRemoteStreams(sid);
+    },
+    [dropAllRemoteStreams],
+  );
+
+  const closeAll = useCallback(() => {
+    for (const sid of [...pcsRef.current.keys()]) closePC(sid);
+  }, [closePC]);
 
   /**
-   * ASOSIY TUZATISH: syncLocalTracks
-   * Har bir peer uchun local camera/mic va screen share tracklarini
-   * to'g'ri qo'shadi/olib tashlaydi. Screen share yoqilganda
-   * alohida track sifatida yuboriladi, camera o'chirilmaydi.
+   * PC YARATISH
+   * isOfferer = true  → biz offer yuboramiz (yangi kirgan foydalanuvchi)
+   * isOfferer = false → biz answer kutamiz (mavjud peer)
    */
-  const syncLocalTracks = useCallback((peer: PeerEntry) => {
-    const camStream = localStreamRef.current;
-
-    // ── Audio track ──
-    const audioTrack = camStream?.getAudioTracks()[0] ?? null;
-    if (audioTrack && !peer.audioSender) {
-      peer.audioSender = peer.pc.addTrack(audioTrack, camStream!);
-    } else if (!audioTrack && peer.audioSender) {
-      try {
-        peer.pc.removeTrack(peer.audioSender);
-      } catch {
-        /* ignore */
-      }
-      peer.audioSender = null;
-    } else if (audioTrack && peer.audioSender) {
-      // Track o'zgardi (masalan, mikrofon qayta ochildi)
-      const currentTrack = peer.audioSender.track;
-      if (currentTrack !== audioTrack) {
-        peer.audioSender.replaceTrack(audioTrack).catch(() => undefined);
-      }
-    }
-
-    // ── Camera video track ──
-    const videoTrack = camStream?.getVideoTracks()[0] ?? null;
-    if (videoTrack && !peer.videoSender) {
-      peer.videoSender = peer.pc.addTrack(videoTrack, camStream!);
-    } else if (!videoTrack && peer.videoSender) {
-      try {
-        peer.pc.removeTrack(peer.videoSender);
-      } catch {
-        /* ignore */
-      }
-      peer.videoSender = null;
-    } else if (videoTrack && peer.videoSender) {
-      const currentTrack = peer.videoSender.track;
-      if (currentTrack !== videoTrack) {
-        peer.videoSender.replaceTrack(videoTrack).catch(() => undefined);
-      }
-    }
-
-    // ── Screen share track (alohida sender) ──
-    const shareStream = screenStreamRef.current;
-    const screenTrack = shareStream?.getVideoTracks()[0] ?? null;
-    if (screenTrack && !peer.screenSender) {
-      peer.screenSender = peer.pc.addTrack(screenTrack, shareStream!);
-    } else if (!screenTrack && peer.screenSender) {
-      try {
-        peer.pc.removeTrack(peer.screenSender);
-      } catch {
-        /* ignore */
-      }
-      peer.screenSender = null;
-    }
-  }, []);
-
-  const createPeer = useCallback(
-    (uid: string) => {
-      const existing = peersRef.current[uid];
+  const createPC = useCallback(
+    (targetSid: string, isOfferer: boolean): PCEntry => {
+      const existing = pcsRef.current.get(targetSid);
       if (existing) {
-        syncLocalTracks(existing);
+        syncTracks(existing);
         return existing;
       }
-      if (!user) throw new Error("Foydalanuvchi topilmadi");
 
-      const peer: PeerEntry = {
-        pc: new RTCPeerConnection(rtcConfig),
-        polite: user.uid > uid,
-        makingOffer: false,
-        ignoreOffer: false,
-        settingAnswer: false,
-        pendingCandidates: [],
+      const pc = new RTCPeerConnection(RTC_CONFIG);
+      const entry: PCEntry = {
+        pc,
         audioSender: null,
         videoSender: null,
         screenSender: null,
+        isOfferer,
+        makingOffer: false,
+        streams: new Map(),
       };
-      peersRef.current[uid] = peer;
+      pcsRef.current.set(targetSid, entry);
 
-      // ICE candidates
-      peer.pc.onicecandidate = (e) => {
-        if (e.candidate)
-          void sendSignal(uid, { candidate: e.candidate.toJSON() });
-      };
-
-      /**
-       * ASOSIY TUZATISH: ontrack
-       * Remote tracklarni to'g'ri stream bilan bog'laymiz.
-       * Har bir track uchun alohida stream yaratilishi mumkin,
-       * shuning uchun streams[0] bo'sh bo'lsa yangi MediaStream yasaymiz.
-       */
-      peer.pc.ontrack = (e) => {
-        const stream = e.streams[0] ?? new MediaStream([e.track]);
-
-        // Stream mavjud bo'lmasa, track bilan yangi stream yasaymiz
-        if (!e.streams[0]) {
-          stream.addTrack(e.track);
+      // ICE → socket
+      pc.onicecandidate = ({ candidate }) => {
+        if (candidate && socketRef.current) {
+          socketRef.current.emit("ice-candidate", {
+            to: targetSid,
+            candidate: candidate.toJSON(),
+          });
         }
+      };
 
-        setRemoteStream(uid, stream);
+      pc.oniceconnectionstatechange = () => {
+        if (pc.iceConnectionState === "failed") pc.restartIce();
+      };
 
-        e.track.onended = () => {
-          const stillLive = stream
-            .getTracks()
-            .some((t) => t.readyState === "live");
-          if (!stillLive) removeRemoteStream(uid, stream.id);
-        };
+      pc.onconnectionstatechange = () => {
+        if (
+          pc.connectionState === "failed" ||
+          pc.connectionState === "closed"
+        ) {
+          pcsRef.current.delete(targetSid);
+          dropAllRemoteStreams(targetSid);
+        }
+      };
 
-        // Track mute/unmute holatini kuzatamiz
-        e.track.onmute = () => {
-          // UI yangilanishi Firestore orqali keladi
+      // Remote track qabul qilish
+      pc.ontrack = ({ track, streams }) => {
+        const stream =
+          streams.length > 0 ? streams[0] : new MediaStream([track]);
+        entry.streams.set(stream.id, stream);
+        addRemoteStream(targetSid, stream);
+
+        track.onunmute = () => addRemoteStream(targetSid, stream);
+        track.onended = () => {
+          const live = stream.getTracks().some((t) => t.readyState === "live");
+          if (!live) {
+            entry.streams.delete(stream.id);
+            dropRemoteStream(targetSid, stream.id);
+          }
         };
       };
 
-      // Negotiation
-      peer.pc.onnegotiationneeded = async () => {
+      // Negotiation — FAQAT isOfferer=true bo'lsa offer yuboramiz
+      pc.onnegotiationneeded = async () => {
+        if (!entry.isOfferer || entry.makingOffer) return;
         try {
-          peer.makingOffer = true;
-          await peer.pc.setLocalDescription();
-          if (peer.pc.localDescription) {
-            await sendSignal(uid, {
-              description: {
-                type: peer.pc.localDescription.type,
-                sdp: peer.pc.localDescription.sdp ?? "",
+          entry.makingOffer = true;
+          await pc.setLocalDescription();
+          if (pc.localDescription && socketRef.current) {
+            socketRef.current.emit("offer", {
+              to: targetSid,
+              offer: {
+                type: pc.localDescription.type,
+                sdp: pc.localDescription.sdp,
               },
             });
           }
         } catch (e) {
-          console.error("Negotiation:", e);
+          console.error("onnegotiationneeded:", e);
         } finally {
-          peer.makingOffer = false;
+          entry.makingOffer = false;
         }
       };
 
-      peer.pc.onconnectionstatechange = () => {
-        const state = peer.pc.connectionState;
-        if (state === "failed" || state === "closed") closePeer(uid);
-      };
-
-      // Tracklarni darhol qo'shamiz
-      syncLocalTracks(peer);
-      return peer;
+      // Track'larni qo'shamiz — isOfferer=true bo'lsa negotiation trigger bo'ladi
+      syncTracks(entry);
+      return entry;
     },
-    [
-      closePeer,
-      removeRemoteStream,
-      sendSignal,
-      setRemoteStream,
-      syncLocalTracks,
-      user,
-    ],
+    [addRemoteStream, dropAllRemoteStreams, dropRemoteStream, syncTracks],
   );
 
-  const flushCandidates = useCallback(async (peer: PeerEntry) => {
-    if (!peer.pc.remoteDescription) return;
-    while (peer.pendingCandidates.length) {
-      const c = peer.pendingCandidates.shift();
-      if (!c) continue;
-      try {
-        await peer.pc.addIceCandidate(c);
-      } catch (e) {
-        console.error("ICE flush:", e);
-      }
-    }
-  }, []);
+  // ── Local media ──────────────────────────────────────────────────────────
 
-  // ═══════════════════════════════════════════════════════════════════════════
-  // LOCAL MEDIA
-  // ═══════════════════════════════════════════════════════════════════════════
-
-  const ensureLocalMedia = useCallback(async () => {
-    if (localStreamRef.current) {
-      localStreamRef.current.getAudioTracks().forEach((t) => {
-        t.enabled = !isMutedRef.current;
+  const ensureMedia = useCallback(async () => {
+    if (localRef.current) {
+      localRef.current.getAudioTracks().forEach((t) => {
+        t.enabled = !mutedRef.current;
       });
-      localStreamRef.current.getVideoTracks().forEach((t) => {
-        t.enabled = !isVideoOffRef.current;
+      localRef.current.getVideoTracks().forEach((t) => {
+        t.enabled = !videoOffRef.current;
       });
-      return localStreamRef.current;
+      return localRef.current;
     }
+
     if (!navigator.mediaDevices?.getUserMedia) {
-      const msg = "Brauzer kamera yoki mikrofonni qo'llab-quvvatlamaydi.";
+      const msg = "Brauzer media qurilmalarni qo'llab-quvvatlamaydi.";
       setPermissionError(msg);
       toast.error(msg);
       return null;
     }
-    if (mediaPromiseRef.current) return mediaPromiseRef.current;
 
-    mediaPromiseRef.current = (async () => {
+    if (mediaPromRef.current) return mediaPromRef.current;
+
+    mediaPromRef.current = (async () => {
       setIsInitializing(true);
       setPermissionError(null);
 
-      const audio: MediaTrackConstraints = {
+      const audioC: MediaTrackConstraints = {
         echoCancellation: true,
         noiseSuppression: true,
         autoGainControl: true,
       };
-      const video: MediaTrackConstraints = {
+      const videoC: MediaTrackConstraints = {
         width: { ideal: 1280 },
         height: { ideal: 720 },
+        frameRate: { ideal: 30 },
         facingMode: "user",
       };
 
-      const attempts = [
-        { constraints: { audio, video } as MediaStreamConstraints },
-        { constraints: { audio, video: true } as MediaStreamConstraints },
-        {
-          constraints: { audio, video: false } as MediaStreamConstraints,
-          warning: "Kamera topilmadi. Faqat mikrofon ishlaydi.",
-        },
-        {
-          constraints: { audio: false, video } as MediaStreamConstraints,
-          warning: "Mikrofon topilmadi. Faqat kamera ishlaydi.",
-        },
+      const tries: { c: MediaStreamConstraints; warn?: string }[] = [
+        { c: { audio: audioC, video: videoC } },
+        { c: { audio: audioC, video: true } },
+        { c: { audio: audioC, video: false }, warn: "Kamera topilmadi" },
+        { c: { audio: false, video: videoC }, warn: "Mikrofon topilmadi" },
       ];
 
       let stream: MediaStream | null = null;
-      let warning = "";
-      let lastError: unknown = null;
+      let warnMsg = "";
+      let lastErr: unknown;
 
-      for (const attempt of attempts) {
+      for (const t of tries) {
         try {
-          stream = await navigator.mediaDevices.getUserMedia(
-            attempt.constraints,
-          );
-          warning = attempt.warning ?? "";
+          stream = await navigator.mediaDevices.getUserMedia(t.c);
+          warnMsg = t.warn ?? "";
           break;
         } catch (e) {
-          lastError = e;
+          lastErr = e;
         }
       }
 
       if (!stream) {
-        const err = lastError as DOMException | null;
+        const err = lastErr as DOMException | null;
         const msg =
           err?.name === "NotAllowedError" ||
           err?.name === "PermissionDeniedError"
-            ? "Kamera va mikrofon uchun brauzer ruxsatini yoqing."
+            ? "Kamera/mikrofon uchun brauzer ruxsatini bering."
             : err?.name === "NotFoundError"
               ? "Kamera yoki mikrofon topilmadi."
-              : "Kamera yoki mikrofonni ishga tushirib bo'lmadi.";
+              : "Media qurilmani yoqib bo'lmadi.";
         setPermissionError(msg);
         toast.error(msg);
         throw err ?? new Error(msg);
       }
 
-      if (warning) toast.warning(warning);
+      if (warnMsg) toast.warning(warnMsg);
 
       stream.getAudioTracks().forEach((t) => {
-        t.enabled = !isMutedRef.current;
+        t.enabled = !mutedRef.current;
       });
       stream.getVideoTracks().forEach((t) => {
-        t.enabled = !isVideoOffRef.current;
+        t.enabled = !videoOffRef.current;
       });
 
+      localRef.current = stream;
       setLocalStream(stream);
-      localStreamRef.current = stream;
 
-      if (stream.getAudioTracks().length) detectSpeaking(stream);
-      else void updateSpeakingState(false);
-
-      await updateParticipantState();
+      if (stream.getAudioTracks().length) startSpeaking(stream);
       return stream;
     })()
       .catch((e) => {
-        console.error("Local media:", e);
+        console.error("ensureMedia:", e);
         return null;
       })
       .finally(() => {
         setIsInitializing(false);
-        mediaPromiseRef.current = null;
+        mediaPromRef.current = null;
       });
 
-    return mediaPromiseRef.current;
-  }, [detectSpeaking, updateParticipantState, updateSpeakingState]);
+    return mediaPromRef.current;
+  }, [startSpeaking]);
 
-  // ═══════════════════════════════════════════════════════════════════════════
-  // SCREEN SHARE
-  // ═══════════════════════════════════════════════════════════════════════════
+  // ── Screen share ─────────────────────────────────────────────────────────
 
-  const stopScreenShare = useCallback(async () => {
-    const stream = screenStreamRef.current;
-    if (!stream) return;
+  const stopScreen = useCallback(async () => {
+    const s = screenRef.current;
+    if (!s) return;
 
-    // Barcha peer'lardan screen sender'ni olib tashlaymiz
-    Object.values(peersRef.current).forEach((peer) => {
-      if (!peer.screenSender) return;
+    for (const e of pcsRef.current.values()) {
+      if (!e.screenSender) continue;
       try {
-        peer.pc.removeTrack(peer.screenSender);
+        e.pc.removeTrack(e.screenSender);
       } catch {
-        /* ignore */
+        /**/
       }
-      peer.screenSender = null;
-    });
+      e.screenSender = null;
+    }
 
-    stream.getTracks().forEach((t) => t.stop());
-    screenStreamRef.current = null;
+    s.getTracks().forEach((t) => t.stop());
+    screenRef.current = null;
     setScreenStream(null);
     setIsScreenSharing(false);
+    socketRef.current?.emit("screen-share-stop");
+  }, []);
 
-    if (user && onlineClassRef.current?.screenSharerId === user.uid) {
-      try {
-        await setDoc(
-          onlineClassDocRef,
-          {
-            screenSharerId: deleteField(),
-            screenShareStreamId: deleteField(),
-          },
-          { merge: true },
-        );
-      } catch (e) {
-        console.error("Stop screen share:", e);
-      }
-    }
-  }, [user]);
-
-  /**
-   * ASOSIY TUZATISH: toggleScreenShare
-   * Screen share yoqilganda camera O'CHIRILMAYDI.
-   * Screen share alohida track sifatida yuboriladi.
-   * Screen share o'chirilganda camera avvalgi holatda qoladi.
-   */
-  const toggleScreenShare = useCallback(async () => {
-    if (!user || (!isAdmin && !isTeacher)) return;
-
-    if (screenStreamRef.current) {
-      await stopScreenShare();
+  const toggleScreen = useCallback(async () => {
+    if (!isAdmin && !isTeacher) return;
+    if (screenRef.current) {
+      await stopScreen();
       return;
     }
 
@@ -942,31 +745,19 @@ export function OnlineClassRoom() {
         return;
       }
 
-      // Firestore'ga screen sharer info yozamiz
-      await setDoc(
-        onlineClassDocRef,
-        {
-          screenSharerId: user.uid,
-          screenShareStreamId: stream.id,
-        },
-        { merge: true },
-      );
-
-      screenStreamRef.current = stream;
+      screenRef.current = stream;
       setScreenStream(stream);
       setIsScreenSharing(true);
 
-      // Barcha mavjud peer'larga screen track qo'shamiz
-      // Camera track SAQLANIB QOLADI
-      Object.values(peersRef.current).forEach((peer) => {
-        if (!peer.screenSender) {
-          peer.screenSender = peer.pc.addTrack(track, stream);
+      for (const e of pcsRef.current.values()) {
+        if (!e.screenSender) {
+          e.screenSender = e.pc.addTrack(track, stream);
         }
-      });
+      }
 
-      // Foydalanuvchi screen share'ni brauzerdan to'xtatsa
+      socketRef.current?.emit("screen-share-start", { streamId: stream.id });
       track.onended = () => {
-        void stopScreenShare();
+        void stopScreen();
       };
     } catch (e) {
       const err = e as DOMException;
@@ -974,55 +765,27 @@ export function OnlineClassRoom() {
         toast.error("Screen share ishlamadi.");
       }
     }
-  }, [isAdmin, isTeacher, stopScreenShare, user]);
+  }, [isAdmin, isTeacher, stopScreen]);
 
-  // ═══════════════════════════════════════════════════════════════════════════
-  // LEAVE / CLEANUP
-  // ═══════════════════════════════════════════════════════════════════════════
+  // ── Cleanup ──────────────────────────────────────────────────────────────
 
-  const cleanupMedia = useCallback(() => {
-    closeAllPeers();
-    if (screenStreamRef.current) {
-      screenStreamRef.current.getTracks().forEach((t) => t.stop());
-      screenStreamRef.current = null;
-    }
-    if (localStreamRef.current) {
-      localStreamRef.current.getTracks().forEach((t) => t.stop());
-      localStreamRef.current = null;
-    }
-    resetSpeaking();
-    setRemoteStreams({});
+  const cleanup = useCallback(() => {
+    closeAll();
+    screenRef.current?.getTracks().forEach((t) => t.stop());
+    screenRef.current = null;
+    localRef.current?.getTracks().forEach((t) => t.stop());
+    localRef.current = null;
+    stopSpeaking();
+    setRemoteStreams(new Map());
+    setRemotePeers(new Map());
     setLocalStream(null);
     setScreenStream(null);
     setIsScreenSharing(false);
-  }, [closeAllPeers, resetSpeaking]);
+  }, [closeAll, stopSpeaking]);
 
-  const removeSelf = useCallback(async () => {
-    if (!user) return;
-    try {
-      await setDoc(
-        onlineClassDocRef,
-        {
-          joinedUsers: arrayRemove(user.uid),
-          [`participantStates.${user.uid}`]: deleteField(),
-          [`signals.${user.uid}`]: deleteField(),
-          ...(onlineClassRef.current?.screenSharerId === user.uid
-            ? {
-                screenSharerId: deleteField(),
-                screenShareStreamId: deleteField(),
-              }
-            : {}),
-        },
-        { merge: true },
-      );
-    } catch (e) {
-      console.error("Remove self:", e);
-    }
-  }, [user]);
-
-  // ═══════════════════════════════════════════════════════════════════════════
-  // FIRESTORE ROOM LISTENER
-  // ═══════════════════════════════════════════════════════════════════════════
+  // ══════════════════════════════════════════════════════════════════════════
+  // SOCKET.IO CONNECTION + EVENTS
+  // ══════════════════════════════════════════════════════════════════════════
 
   useEffect(() => {
     if (!user) {
@@ -1030,496 +793,444 @@ export function OnlineClassRoom() {
       return;
     }
 
-    const unsub = onSnapshot(
-      onlineClassDocRef,
-      (snap) => {
-        if (!snap.exists()) {
-          toast.info("Online dars topilmadi.");
-          navigate("/courses");
-          return;
-        }
+    const socket = io(SOCKET_URL, {
+      transports: ["websocket", "polling"],
+      reconnection: true,
+      reconnectionAttempts: 10,
+      reconnectionDelay: 1000,
+    });
+    socketRef.current = socket;
 
-        const data = snap.data() as OnlineClassState;
-        const joinedUsers = data.joinedUsers ?? [];
-        const kickedUsers = data.kickedUsers ?? [];
+    // ── Ulandi ──────────────────────────────────────────────────────────────
+    socket.on("connect", async () => {
+      mySocketIdRef.current = socket.id ?? null;
+      setConnected(true);
+      console.log("✅ Socket.io ulandi:", socket.id);
 
-        setOnlineClass(data);
+      await ensureMedia();
 
-        if (!data.isActive) {
-          cleanupMedia();
-          toast.info("Online dars yakunlandi.");
-          navigate("/courses");
-          return;
-        }
+      socket.emit("join-room", {
+        roomId: "burhan-academy-live",
+        uid: user.uid,
+        displayName: getName(
+          user.displayName,
+          user.email,
+          isAdmin ? "Admin" : isTeacher ? "Ustoz" : "Foydalanuvchi",
+        ),
+        photoURL: user.photoURL ?? "",
+        isAdmin: Boolean(isAdmin),
+        isTeacher: Boolean(isTeacher),
+      });
+    });
 
-        if (kickedUsers.includes(user.uid) && !isAdmin && !isTeacher) {
-          cleanupMedia();
-          toast.error("Siz bu darsdan chiqarilgansiz.");
-          navigate("/courses");
-          return;
-        }
+    socket.on("disconnect", (reason) => {
+      setConnected(false);
+      console.log("❌ Socket.io uzildi:", reason);
+    });
 
-        if (!isAdmin && !isTeacher && !joinedUsers.includes(user.uid)) {
-          cleanupMedia();
-          toast.error("Bu darsga qo'shilmagansiz.");
-          navigate("/courses");
-          return;
-        }
+    socket.on("connect_error", (err) => {
+      console.error("Socket.io xatolik:", err);
+      toast.error("Server bilan ulanishda xatolik");
+    });
 
-        const states = data.participantStates ?? {};
-        const idsSet = new Set<string>([
-          ...joinedUsers,
-          ...Object.keys(states),
-        ]);
-        if (isAdmin || isTeacher || joinedUsers.includes(user.uid))
-          idsSet.add(user.uid);
-
-        const ids = Array.from(idsSet).filter(
-          (id) => !kickedUsers.includes(id),
+    // ── Xonaga qo'shildim ───────────────────────────────────────────────────
+    // existingPeers — bu peer'larga BIZ offer yuboramiz
+    socket.on(
+      "room-joined",
+      async ({
+        existingPeers,
+        roomState,
+      }: {
+        socketId: string;
+        existingPeers: (RemotePeer & { socketId: string })[];
+        roomState: {
+          screenSharerId?: string;
+          screenShareStreamId?: string;
+        } | null;
+      }) => {
+        console.log(
+          "🏠 Xonaga qo'shildim, mavjud peer'lar:",
+          existingPeers.length,
         );
 
-        const nextParticipants: Participant[] = ids
-          .map((id) => {
-            const state = states[id] ?? {};
-            const self = id === user.uid;
-            const admin = self ? Boolean(isAdmin) : Boolean(state.isAdmin);
-            const teacher = self
-              ? Boolean(isTeacher)
-              : Boolean(state.isTeacher);
+        if (roomState?.screenSharerId) {
+          setScreenSharerId(roomState.screenSharerId);
+          setScreenShareStreamId(roomState.screenShareStreamId ?? null);
+        }
 
-            return {
-              uid: id,
-              displayName: self
-                ? getName(
-                    user.displayName,
-                    user.email,
-                    isAdmin ? "Admin" : isTeacher ? "Ustoz" : "Siz",
-                  )
-                : getName(
-                    state.displayName,
-                    state.email,
-                    admin ? "Admin" : teacher ? "Ustoz" : "Foydalanuvchi",
-                  ),
-              photoURL: self ? (user.photoURL ?? "") : (state.photoURL ?? ""),
-              isMuted: self
-                ? !localStreamRef.current?.getAudioTracks().length ||
-                  isMutedRef.current
-                : (state.isMuted ?? true),
-              isVideoOff: self
-                ? !localStreamRef.current?.getVideoTracks().length ||
-                  isVideoOffRef.current
-                : (state.isVideoOff ?? true),
-              isAdmin: admin,
-              isTeacher: teacher,
-              isSpeaking: self ? false : Boolean(state.isSpeaking),
-            };
-          })
-          .sort((a, b) => {
-            const aRole = Number(a.isAdmin || a.isTeacher);
-            const bRole = Number(b.isAdmin || b.isTeacher);
-            if (aRole !== bRole) return bRole - aRole;
-            if (a.uid === user.uid) return -1;
-            if (b.uid === user.uid) return 1;
-            return a.displayName.localeCompare(b.displayName);
-          });
+        setRemotePeers((prev) => {
+          const next = new Map(prev);
+          existingPeers.forEach((p) => next.set(p.socketId, p));
+          return next;
+        });
 
-        setParticipants(nextParticipants);
-        setRoomReady(true);
-      },
-      (e) => {
-        console.error("Room snapshot:", e);
-        toast.error("Online darsni yuklab bo'lmadi.");
+        // Media tayyor bo'lishini kutamiz
+        await ensureMedia();
+
+        // Mavjud peer'larga OFFER yuboramiz (biz initiator'miz)
+        for (const peer of existingPeers) {
+          createPC(peer.socketId, true); // isOfferer = true
+        }
       },
     );
 
-    return () => {
-      unsub();
-    };
-  }, [cleanupMedia, isAdmin, isTeacher, navigate, user]);
+    // ── Yangi peer qo'shildi ────────────────────────────────────────────────
+    // Yangi peer BIZ ga offer yuboradi, biz ANSWER kutamiz
+    socket.on("peer-joined", (peer: RemotePeer & { socketId: string }) => {
+      console.log("👋 Yangi peer:", peer.displayName, peer.socketId);
 
-  // Session ID init (admin/ustoz tomonidan)
-  useEffect(() => {
-    if (!onlineClass?.isActive || onlineClass.sessionId) return;
-    if (!user || (!isAdmin && !isTeacher)) return;
-    void setDoc(
-      onlineClassDocRef,
-      { sessionId: createSessionId() },
-      { merge: true },
-    ).catch((e) => console.error("Session init:", e));
-  }, [isAdmin, isTeacher, onlineClass?.isActive, onlineClass?.sessionId, user]);
+      setRemotePeers((prev) => {
+        const next = new Map(prev);
+        next.set(peer.socketId, peer);
+        return next;
+      });
 
-  // Session o'zgarganda barcha peer'larni qayta o'rnatamiz
-  useEffect(() => {
-    const sessionId = onlineClass?.sessionId ?? null;
-    if (
-      previousSessionIdRef.current &&
-      sessionId &&
-      previousSessionIdRef.current !== sessionId
-    ) {
-      closeAllPeers();
-      setRemoteStreams({});
-      processedSignalsRef.current.clear();
-    }
-    previousSessionIdRef.current = sessionId;
-  }, [closeAllPeers, onlineClass?.sessionId]);
+      // isOfferer = false → biz offer YUBORMAMIZ, kutamiz
+      createPC(peer.socketId, false);
+    });
 
-  // Xona tayyor bo'lganda media olish
-  useEffect(() => {
-    if (!roomReady || !onlineClass?.isActive || !user) return;
-    void ensureLocalMedia();
-    void updateParticipantState();
-  }, [
-    ensureLocalMedia,
-    onlineClass?.isActive,
-    roomReady,
-    updateParticipantState,
-    user,
-  ]);
+    // ── Peer ketdi ──────────────────────────────────────────────────────────
+    socket.on("peer-left", ({ socketId }: { socketId: string }) => {
+      console.log("🚪 Peer ketdi:", socketId);
+      closePC(socketId);
+      setRemotePeers((prev) => {
+        const next = new Map(prev);
+        next.delete(socketId);
+        return next;
+      });
+      if (screenSharerId === socketId) {
+        setScreenSharerId(null);
+        setScreenShareStreamId(null);
+      }
+    });
 
-  // ═══════════════════════════════════════════════════════════════════════════
-  // SIGNAL LISTENER
-  // ═══════════════════════════════════════════════════════════════════════════
-
-  useEffect(() => {
-    if (!user || !onlineClass?.isActive || !onlineClass.sessionId) return;
-
-    const unsub = onSnapshot(
-      onlineClassDocRef,
-      (snap) => {
-        if (!snap.exists()) return;
-        const data = snap.data() as OnlineClassState;
-        const signals = data.signals?.[user.uid] ?? {};
-
-        Object.entries(signals).forEach(([signalId, signal]) => {
-          if (processedSignalsRef.current.has(signalId)) return;
-          if (signal.sessionId !== onlineClass.sessionId) {
-            void setDoc(
-              onlineClassDocRef,
-              {
-                [`signals.${user.uid}.${signalId}`]: deleteField(),
-              },
-              { merge: true },
-            ).catch(() => undefined);
-            return;
-          }
-
-          processedSignalsRef.current.add(signalId);
-
-          void (async () => {
-            try {
-              if (signal.description) {
-                // Offer kelsa avval media olamiz
-                if (signal.description.type === "offer")
-                  await ensureLocalMedia();
-
-                const peer = createPeer(signal.from);
-                const readyForOffer =
-                  !peer.makingOffer &&
-                  (peer.pc.signalingState === "stable" || peer.settingAnswer);
-                const offerCollision =
-                  signal.description.type === "offer" && !readyForOffer;
-
-                peer.ignoreOffer = !peer.polite && offerCollision;
-
-                if (!peer.ignoreOffer) {
-                  peer.settingAnswer = signal.description.type === "answer";
-                  await peer.pc.setRemoteDescription(signal.description);
-                  peer.settingAnswer = false;
-                  await flushCandidates(peer);
-
-                  if (signal.description.type === "offer") {
-                    await peer.pc.setLocalDescription();
-                    if (peer.pc.localDescription) {
-                      await sendSignal(signal.from, {
-                        description: {
-                          type: peer.pc.localDescription.type,
-                          sdp: peer.pc.localDescription.sdp ?? "",
-                        },
-                      });
-                    }
-                  }
-                }
-              }
-
-              if (signal.candidate) {
-                const peer = createPeer(signal.from);
-                if (peer.ignoreOffer) return;
-                if (peer.pc.remoteDescription) {
-                  await peer.pc.addIceCandidate(signal.candidate);
-                } else {
-                  peer.pendingCandidates.push(signal.candidate);
-                }
-              }
-            } catch (e) {
-              console.error("Signal process:", e);
-            } finally {
-              try {
-                await setDoc(
-                  onlineClassDocRef,
-                  {
-                    [`signals.${user.uid}.${signalId}`]: deleteField(),
-                  },
-                  { merge: true },
-                );
-              } catch {
-                /* ignore */
-              }
-            }
-          })();
+    // ── Qatnashuvchilar yangilandi ──────────────────────────────────────────
+    socket.on(
+      "participants-updated",
+      (list: (RemotePeer & { socketId: string })[]) => {
+        setRemotePeers((prev) => {
+          const next = new Map(prev);
+          list.forEach((p) => {
+            if (p.socketId !== socket.id) next.set(p.socketId, p);
+          });
+          return next;
         });
       },
-      (e) => {
-        console.error("Signal listener:", e);
+    );
+
+    // ── Peer holati yangilandi ──────────────────────────────────────────────
+    socket.on(
+      "peer-state-updated",
+      (data: Partial<RemotePeer> & { socketId: string }) => {
+        const { socketId, ...rest } = data;
+        setRemotePeers((prev) => {
+          const next = new Map(prev);
+          const p = next.get(socketId);
+          if (p) next.set(socketId, { ...p, ...rest });
+          return next;
+        });
       },
     );
 
+    // ── OFFER qabul qilish ──────────────────────────────────────────────────
+    // Server "peer-joined" dan KEYIN yangi peer bu offer'ni yuboradi
+    socket.on(
+      "offer",
+      async ({
+        from,
+        offer,
+      }: {
+        from: string;
+        offer: RTCSessionDescriptionInit;
+      }) => {
+        console.log("📨 Offer keldi:", from.slice(0, 6));
+
+        await ensureMedia();
+
+        // Bu peer'dan offer keldi → biz answer beramiz (isOfferer=false)
+        const entry = pcsRef.current.get(from) ?? createPC(from, false);
+
+        try {
+          await entry.pc.setRemoteDescription(offer);
+          await entry.pc.setLocalDescription();
+
+          if (entry.pc.localDescription) {
+            socket.emit("answer", {
+              to: from,
+              answer: {
+                type: entry.pc.localDescription.type,
+                sdp: entry.pc.localDescription.sdp,
+              },
+            });
+          }
+        } catch (e) {
+          console.error("Offer process:", e);
+        }
+      },
+    );
+
+    // ── ANSWER qabul qilish ─────────────────────────────────────────────────
+    socket.on(
+      "answer",
+      async ({
+        from,
+        answer,
+      }: {
+        from: string;
+        answer: RTCSessionDescriptionInit;
+      }) => {
+        console.log("📩 Answer keldi:", from.slice(0, 6));
+        const entry = pcsRef.current.get(from);
+        if (!entry) return;
+
+        try {
+          await entry.pc.setRemoteDescription(answer);
+        } catch (e) {
+          console.error("Answer process:", e);
+        }
+      },
+    );
+
+    // ── ICE candidate ───────────────────────────────────────────────────────
+    socket.on(
+      "ice-candidate",
+      async ({
+        from,
+        candidate,
+      }: {
+        from: string;
+        candidate: RTCIceCandidateInit;
+      }) => {
+        const entry = pcsRef.current.get(from);
+        if (!entry) return;
+        try {
+          await entry.pc.addIceCandidate(candidate);
+        } catch {
+          // Ba'zan normal — ignore
+        }
+      },
+    );
+
+    // ── Screen share ────────────────────────────────────────────────────────
+    socket.on(
+      "screen-share-started",
+      ({ socketId, streamId }: { socketId: string; streamId: string }) => {
+        setScreenSharerId(socketId);
+        setScreenShareStreamId(streamId);
+        setRemotePeers((prev) => {
+          const next = new Map(prev);
+          const p = next.get(socketId);
+          if (p)
+            next.set(socketId, {
+              ...p,
+              isScreenSharing: true,
+              screenStreamId: streamId,
+            });
+          return next;
+        });
+      },
+    );
+
+    socket.on("screen-share-stopped", ({ socketId }: { socketId: string }) => {
+      if (screenSharerId === socketId) {
+        setScreenSharerId(null);
+        setScreenShareStreamId(null);
+      }
+      setRemotePeers((prev) => {
+        const next = new Map(prev);
+        const p = next.get(socketId);
+        if (p)
+          next.set(socketId, {
+            ...p,
+            isScreenSharing: false,
+            screenStreamId: null,
+          });
+        return next;
+      });
+    });
+
+    // ── Kicked / Class ended ────────────────────────────────────────────────
+    socket.on("kicked", ({ message }: { message: string }) => {
+      toast.error(message);
+      cleanup();
+      navigate("/courses");
+    });
+
+    socket.on("class-ended", ({ message }: { message: string }) => {
+      toast.info(message);
+      cleanup();
+      navigate("/courses");
+    });
+
     return () => {
-      unsub();
-      processedSignalsRef.current.clear();
+      socket.disconnect();
+      socketRef.current = null;
+      cleanup();
     };
-  }, [
-    createPeer,
-    ensureLocalMedia,
-    flushCandidates,
-    onlineClass?.isActive,
-    onlineClass?.sessionId,
-    sendSignal,
-    user,
-  ]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user]);
 
-  // ═══════════════════════════════════════════════════════════════════════════
-  // PEER MANAGEMENT (participants o'zgarganda)
-  // ═══════════════════════════════════════════════════════════════════════════
-
+  // Local stream o'zgarganda barcha PC'larni sync
   useEffect(() => {
-    if (!user || !onlineClass?.isActive || !onlineClass.sessionId) return;
+    for (const entry of pcsRef.current.values()) syncTracks(entry);
+  }, [localStream, screenStream, syncTracks]);
 
-    const activeIds = new Set<string>();
-    participants.forEach((p) => {
-      if (p.uid === user.uid) return;
-      activeIds.add(p.uid);
-      createPeer(p.uid);
-    });
-
-    Object.keys(peersRef.current).forEach((uid) => {
-      if (!activeIds.has(uid)) closePeer(uid);
-    });
-  }, [
-    closePeer,
-    createPeer,
-    onlineClass?.isActive,
-    onlineClass?.sessionId,
-    participants,
-    user,
-  ]);
-
-  // Local stream/screen o'zgarganda barcha peer'larni sync qilamiz
+  // Mute
   useEffect(() => {
-    Object.values(peersRef.current).forEach(syncLocalTracks);
-  }, [localStream, screenStream, syncLocalTracks]);
-
-  // Mute o'zgarganda
-  useEffect(() => {
-    if (!localStreamRef.current) return;
-    localStreamRef.current.getAudioTracks().forEach((t) => {
+    const s = localRef.current;
+    if (!s) return;
+    s.getAudioTracks().forEach((t) => {
       t.enabled = !isMuted;
     });
-    if (isMuted) void updateSpeakingState(false);
-    void updateParticipantState();
-  }, [isMuted, updateParticipantState, updateSpeakingState]);
+    socketRef.current?.emit("state-update", { isMuted });
+  }, [isMuted]);
 
-  // Video o'zgarganda
+  // Video
   useEffect(() => {
-    if (!localStreamRef.current) return;
-    localStreamRef.current.getVideoTracks().forEach((t) => {
+    const s = localRef.current;
+    if (!s) return;
+    s.getVideoTracks().forEach((t) => {
       t.enabled = !isVideoOff;
     });
-    void updateParticipantState();
-  }, [isVideoOff, updateParticipantState]);
+    socketRef.current?.emit("state-update", { isVideoOff });
+  }, [isVideoOff]);
 
-  // Komponent unmount
+  // Unmount
   useEffect(
     () => () => {
-      cleanupMedia();
+      cleanup();
     },
-    [cleanupMedia],
+    [cleanup],
   );
 
-  // ═══════════════════════════════════════════════════════════════════════════
-  // HELPERS: stream getter
-  // ═══════════════════════════════════════════════════════════════════════════
+  // ── Stream getter ────────────────────────────────────────────────────────
 
   const getStreams = useCallback(
-    (uid: string) => {
-      if (uid === user?.uid) {
+    (sid: string) => {
+      if (sid === mySocketIdRef.current) {
         return { camera: localStream, screen: screenStream };
       }
-
-      const streams = remoteStreams[uid] ?? {};
-      const screenStreamId =
-        onlineClass?.screenSharerId === uid
-          ? onlineClass.screenShareStreamId
-          : "";
-
-      // Screen stream va camera stream'ni ajratamiz
-      const screenS = screenStreamId ? (streams[screenStreamId] ?? null) : null;
-      const cameraS =
-        Object.values(streams).find((s) => s.id !== screenStreamId) ?? null;
-
-      return { camera: cameraS, screen: screenS };
+      const all = remoteStreams.get(sid) ?? new Map<string, MediaStream>();
+      const peer = remotePeers.get(sid);
+      const scrId = peer?.isScreenSharing ? (peer.screenStreamId ?? "") : "";
+      const screen = scrId ? (all.get(scrId) ?? null) : null;
+      const camera = [...all.values()].find((s) => s.id !== scrId) ?? null;
+      return { camera, screen };
     },
-    [
-      localStream,
-      onlineClass?.screenSharerId,
-      onlineClass?.screenShareStreamId,
-      remoteStreams,
-      screenStream,
-      user?.uid,
-    ],
+    [localStream, remotePeers, remoteStreams, screenStream],
   );
 
-  // ═══════════════════════════════════════════════════════════════════════════
-  // ACTIONS
-  // ═══════════════════════════════════════════════════════════════════════════
-
-  const handleLeave = async () => {
-    await stopScreenShare();
-    cleanupMedia();
-    await removeSelf();
-    navigate("/courses");
-  };
-
-  const handleEndClass = async () => {
-    if (!isAdmin && !isTeacher) return;
-    await stopScreenShare();
-    cleanupMedia();
-    try {
-      await setDoc(
-        onlineClassDocRef,
-        {
-          isActive: false,
-          joinedUsers: [],
-          kickedUsers: [],
-          participantStates: {},
-          sessionId: deleteField(),
-          screenSharerId: deleteField(),
-          screenShareStreamId: deleteField(),
-          signals: deleteField(),
-        },
-        { merge: true },
-      );
-      toast.success("Online dars yakunlandi.");
-      navigate("/admin?tab=online");
-    } catch (e) {
-      console.error("End class:", e);
-      toast.error("Darsni tugatib bo'lmadi.");
-    }
-  };
-
-  const handleKickUser = async (uid: string) => {
-    if (!isAdmin && !isTeacher) return;
-    try {
-      await setDoc(
-        onlineClassDocRef,
-        {
-          joinedUsers: arrayRemove(uid),
-          kickedUsers: arrayUnion(uid),
-          [`participantStates.${uid}`]: deleteField(),
-        },
-        { merge: true },
-      );
-      toast.success("Foydalanuvchi chiqarildi.");
-    } catch (e) {
-      console.error("Kick user:", e);
-      toast.error("Foydalanuvchini chiqarib bo'lmadi.");
-    }
-  };
+  // ── Actions ──────────────────────────────────────────────────────────────
 
   const handleToggleMute = () => {
-    if (!hasLocalAudio) return;
-    const next = !isMutedRef.current;
-    isMutedRef.current = next;
+    if (!hasAudio) return;
+    const next = !mutedRef.current;
+    mutedRef.current = next;
     setIsMuted(next);
-    localStreamRef.current?.getAudioTracks().forEach((t) => {
+    localRef.current?.getAudioTracks().forEach((t) => {
       t.enabled = !next;
     });
-    patchLocalParticipant({ isMuted: next });
-    if (next) void updateSpeakingState(false);
-    void updateParticipantState({
-      isMuted: next,
-      isVideoOff: isVideoOffRef.current,
-      isSpeaking: false,
-    });
+    if (next) socketRef.current?.emit("state-update", { isSpeaking: false });
   };
 
   const handleToggleVideo = () => {
-    if (!hasLocalVideo) return;
-    const next = !isVideoOffRef.current;
-    isVideoOffRef.current = next;
+    if (!hasVideo) return;
+    const next = !videoOffRef.current;
+    videoOffRef.current = next;
     setIsVideoOff(next);
-    localStreamRef.current?.getVideoTracks().forEach((t) => {
+    localRef.current?.getVideoTracks().forEach((t) => {
       t.enabled = !next;
-    });
-    patchLocalParticipant({ isVideoOff: next });
-    void updateParticipantState({
-      isMuted: isMutedRef.current,
-      isVideoOff: next,
-      isSpeaking: false,
     });
   };
 
-  // ═══════════════════════════════════════════════════════════════════════════
-  // DERIVED VALUES
-  // ═══════════════════════════════════════════════════════════════════════════
+  const handleLeave = () => {
+    void stopScreen();
+    cleanup();
+    socketRef.current?.disconnect();
+    navigate("/courses");
+  };
 
-  const hasLocalAudio = Boolean(localStream?.getAudioTracks().length);
-  const hasLocalVideo = Boolean(localStream?.getVideoTracks().length);
+  const handleEndClass = () => {
+    if (!isAdmin && !isTeacher) return;
+    socketRef.current?.emit("end-class");
+    cleanup();
+    navigate("/admin?tab=online");
+  };
 
-  const screenSharer = onlineClass?.screenSharerId
-    ? participants.find((p) => p.uid === onlineClass.screenSharerId)
+  const handleKick = (targetSid: string) => {
+    if (!isAdmin && !isTeacher) return;
+    socketRef.current?.emit("kick-user", { targetSocketId: targetSid });
+  };
+
+  // ── Derived ──────────────────────────────────────────────────────────────
+
+  const hasAudio = Boolean(localStream?.getAudioTracks().length);
+  const hasVideo = Boolean(localStream?.getVideoTracks().length);
+
+  const localPeer: RemotePeer = {
+    socketId: mySocketIdRef.current ?? "local",
+    uid: user?.uid ?? "",
+    displayName: getName(
+      user?.displayName,
+      user?.email,
+      isAdmin ? "Admin" : isTeacher ? "Ustoz" : "Siz",
+    ),
+    photoURL: user?.photoURL ?? "",
+    isAdmin: Boolean(isAdmin),
+    isTeacher: Boolean(isTeacher),
+    isMuted,
+    isVideoOff,
+    isScreenSharing,
+    isSpeaking: false,
+  };
+
+  const allPeers: RemotePeer[] = [localPeer, ...[...remotePeers.values()]].sort(
+    (a, b) => {
+      const ra = Number(a.isAdmin || a.isTeacher);
+      const rb = Number(b.isAdmin || b.isTeacher);
+      if (ra !== rb) return rb - ra;
+      if (a.socketId === mySocketIdRef.current) return -1;
+      if (b.socketId === mySocketIdRef.current) return 1;
+      return a.displayName.localeCompare(b.displayName);
+    },
+  );
+
+  const screenSharerPeer = screenSharerId
+    ? remotePeers.get(screenSharerId)
     : undefined;
-  const screenSharerStream = screenSharer
-    ? getStreams(screenSharer.uid).screen
+  const isLocalScreen = screenSharerId === mySocketIdRef.current;
+  const screenShareStream = isLocalScreen
+    ? screenStream
+    : screenShareStreamId
+      ? (remoteStreams.get(screenSharerId ?? "")?.get(screenShareStreamId) ??
+        null)
+      : null;
+
+  const presenterPeer =
+    allPeers.find((p) => p.isAdmin || p.isTeacher) ?? allPeers[0];
+  const isLocalPresenter = presenterPeer?.socketId === mySocketIdRef.current;
+  const presenterStream = presenterPeer
+    ? getStreams(presenterPeer.socketId).camera
     : null;
 
-  const presenterParticipant =
-    participants.find((p) => p.isAdmin || p.isTeacher) ??
-    (isAdmin || isTeacher
-      ? (participants.find((p) => p.uid === user?.uid) ?? participants[0])
-      : undefined);
-  const presenterStream = presenterParticipant
-    ? getStreams(presenterParticipant.uid).camera
-    : null;
+  const needTeacherPH =
+    !isAdmin && !isTeacher && !screenSharerPeer && !presenterPeer;
 
-  const showTeacherPlaceholder =
-    !isAdmin && !isTeacher && !screenSharer && !presenterParticipant;
+  const galleryList =
+    presenterMinimized || screenSharerPeer
+      ? allPeers.filter((p) => !p.isVideoOff)
+      : allPeers.filter(
+          (p) => !p.isVideoOff && p.socketId !== presenterPeer?.socketId,
+        );
 
-  const presenterName =
-    presenterParticipant &&
-    !isAdmin &&
-    !isTeacher &&
-    (presenterParticipant.isAdmin || presenterParticipant.isTeacher) &&
-    presenterParticipant.isVideoOff
-      ? "Ustoz"
-      : (presenterParticipant?.displayName ?? "Ustoz");
+  // ── Early returns ────────────────────────────────────────────────────────
 
-  const cameraParticipants = participants.filter((p) => !p.isVideoOff);
-  const galleryParticipants = isPresenterMinimized
-    ? cameraParticipants
-    : screenSharer
-      ? cameraParticipants
-      : cameraParticipants.filter((p) => p.uid !== presenterParticipant?.uid);
-
-  // ═══════════════════════════════════════════════════════════════════════════
-  // RENDER STATES
-  // ═══════════════════════════════════════════════════════════════════════════
-
-  if (!roomReady) {
+  if (!connected && !localStream) {
     return (
       <div className="flex h-screen items-center justify-center bg-[#0f1729]">
         <div className="text-center">
-          <div className="mx-auto mb-4 h-14 w-14 animate-spin rounded-full border-4 border-cyan-400 border-t-transparent" />
-          <p className="text-sm text-gray-400">Jonli darsga ulanmoqda...</p>
+          <div className="mx-auto mb-4 h-12 w-12 animate-spin rounded-full border-4 border-cyan-400 border-t-transparent" />
+          <p className="text-sm text-gray-400">Server bilan ulanmoqda...</p>
         </div>
       </div>
     );
@@ -1528,23 +1239,18 @@ export function OnlineClassRoom() {
   if (permissionError) {
     return (
       <div className="flex h-screen items-center justify-center bg-[#0f1729] px-4">
-        <div className="w-full max-w-lg rounded-3xl border border-white/10 bg-[#162033] p-8 text-center">
-          <div className="mx-auto mb-5 flex h-20 w-20 items-center justify-center rounded-full bg-red-500/15 text-red-300">
-            <VideoOff className="h-10 w-10" />
+        <div className="w-full max-w-md rounded-3xl border border-white/10 bg-[#162033] p-8 text-center">
+          <div className="mx-auto mb-5 flex h-16 w-16 items-center justify-center rounded-full bg-red-500/15 text-red-300">
+            <VideoOff className="h-8 w-8" />
           </div>
-          <h2 className="text-2xl font-bold text-white">
-            Kamera yoki mikrofon kerak
-          </h2>
-          <p className="mt-3 text-sm leading-6 text-gray-400">
-            Jonli suhbat ishlashi uchun brauzer kameraga va mikrofonga ruxsat
-            berishi kerak.
-          </p>
+          <h2 className="text-xl font-bold text-white">Media qurilma kerak</h2>
+          <p className="mt-3 text-sm text-gray-400">{permissionError}</p>
           <button
             onClick={() => {
               setPermissionError(null);
-              void ensureLocalMedia();
+              void ensureMedia();
             }}
-            className="mt-8 rounded-full bg-cyan-500 px-8 py-3 text-sm font-semibold text-slate-950 transition-colors hover:bg-cyan-400"
+            className="mt-6 rounded-full bg-cyan-500 px-8 py-3 text-sm font-semibold text-slate-950 hover:bg-cyan-400"
           >
             Qayta urinish
           </button>
@@ -1553,131 +1259,137 @@ export function OnlineClassRoom() {
     );
   }
 
-  // ═══════════════════════════════════════════════════════════════════════════
-  // MAIN RENDER
-  // ═══════════════════════════════════════════════════════════════════════════
+  // ── RENDER ───────────────────────────────────────────────────────────────
 
   return (
     <div className="flex h-screen flex-col overflow-hidden bg-[#0f1729] text-white">
-      {/* ── Header ── */}
-      <div className="flex h-16 items-center justify-between border-b border-white/5 bg-[#162033]/90 px-4 md:px-6">
+      {/* Header */}
+      <header className="flex h-16 shrink-0 items-center justify-between border-b border-white/5 bg-[#162033]/90 px-4 md:px-6">
         <div className="flex items-center gap-3">
-          <div className="flex h-10 w-10 items-center justify-center rounded-full bg-gradient-to-br from-cyan-400 to-blue-600 font-bold text-slate-950">
+          <div className="flex h-9 w-9 items-center justify-center rounded-full bg-gradient-to-br from-cyan-400 to-blue-600 text-sm font-bold text-slate-950">
             BA
           </div>
           <div>
-            <h1 className="text-base font-semibold">Burhan Academy Live</h1>
+            <p className="text-sm font-semibold leading-tight">
+              Burhan Academy Live
+            </p>
             <p className="text-xs text-gray-400">
-              {participants.length} qatnashuvchi
+              {allPeers.length} qatnashuvchi
             </p>
           </div>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2">
+          {!connected && (
+            <span className="rounded-full bg-yellow-500/20 px-3 py-1 text-[11px] font-semibold text-yellow-200">
+              Qayta ulanmoqda...
+            </span>
+          )}
           {(isAdmin || isTeacher) && (
-            <span className="hidden rounded-full bg-blue-500/20 px-3 py-1 text-[11px] font-semibold text-blue-100 md:inline-flex">
+            <span className="hidden rounded-full bg-blue-500/20 px-3 py-1 text-[11px] font-semibold text-blue-100 sm:inline-flex">
               {isAdmin ? "Admin" : "Ustoz"}
             </span>
           )}
-          <span className="inline-flex items-center gap-2 rounded-full bg-red-500/20 px-3 py-1 text-[11px] font-semibold text-red-200">
-            <span className="h-2 w-2 animate-pulse rounded-full bg-red-400" />
+          <span className="inline-flex items-center gap-1.5 rounded-full bg-red-500/20 px-3 py-1 text-[11px] font-semibold text-red-200">
+            <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-red-400" />
             JONLI
           </span>
         </div>
-      </div>
+      </header>
 
-      {/* ── Main area ── */}
-      <div className="relative flex flex-1 gap-4 overflow-hidden p-3 md:p-4">
-        <div className="flex min-w-0 flex-1 flex-col gap-4 overflow-hidden">
-          {/* ── Presenter / Screen Share ── */}
-          {!isPresenterMinimized &&
-            (screenSharer ? (
-              /* Screen share ko'rinishi */
-              <div className="relative min-h-[280px] overflow-hidden rounded-3xl border border-white/10 bg-[#101827] shadow-[0_20px_60px_rgba(0,0,0,0.28)] md:min-h-[420px]">
-                {screenSharerStream ? (
-                  <MediaView
-                    stream={screenSharerStream}
-                    muted={screenSharer.uid === user?.uid}
-                    className="absolute inset-0 h-full w-full bg-black object-contain"
-                  />
-                ) : (
-                  <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 text-center">
-                    <MonitorUp className="h-10 w-10 text-cyan-300" />
-                    <p className="text-sm text-gray-300">
-                      Screen share ulanmoqda...
-                    </p>
+      {/* Body */}
+      <div className="relative flex flex-1 gap-3 overflow-hidden p-3">
+        <div className="flex min-w-0 flex-1 flex-col gap-3 overflow-y-auto">
+          {/* Presenter */}
+          {!presenterMinimized && (
+            <div className="relative">
+              {screenSharerPeer || isLocalScreen ? (
+                <div className="relative min-h-[260px] overflow-hidden rounded-2xl border border-white/10 bg-black md:min-h-[400px]">
+                  {screenShareStream ? (
+                    <VideoEl
+                      stream={screenShareStream}
+                      muted={isLocalScreen}
+                      className="h-full w-full object-contain"
+                    />
+                  ) : (
+                    <div className="flex h-full min-h-[260px] flex-col items-center justify-center gap-3 text-gray-500">
+                      <MonitorUp className="h-10 w-10 text-cyan-400" />
+                      <p className="text-sm">Ekran ulanmoqda...</p>
+                    </div>
+                  )}
+                  <div className="absolute left-4 top-4 rounded-xl bg-black/60 px-3 py-1.5 text-xs font-medium backdrop-blur">
+                    {isLocalScreen ? "Siz" : screenSharerPeer?.displayName} —
+                    ekran ulashmoqda
                   </div>
-                )}
-                <div className="absolute left-4 top-4 rounded-full bg-black/45 px-4 py-2 text-xs font-semibold backdrop-blur md:left-5 md:top-5">
-                  {screenSharer.uid === user?.uid
-                    ? "Siz"
-                    : screenSharer.displayName}{" "}
-                  ekran ulashmoqda
+                  <button
+                    onClick={() => setPresenterMinimized(true)}
+                    className="absolute right-3 top-3 rounded-xl bg-black/60 p-2 text-white backdrop-blur hover:bg-black/80"
+                  >
+                    <Minimize2 className="h-4 w-4" />
+                  </button>
                 </div>
-                <button
-                  onClick={() => setIsPresenterMinimized(true)}
-                  className="absolute right-4 top-4 rounded-full bg-black/45 p-2 text-white backdrop-blur transition-colors hover:bg-black/60"
-                >
-                  <Minimize2 className="h-4 w-4" />
-                </button>
-              </div>
-            ) : presenterParticipant ? (
-              /* Presenter camera ko'rinishi */
-              <div className="relative">
-                <ParticipantTile
-                  participant={presenterParticipant}
-                  stream={presenterStream}
-                  isLocal={presenterParticipant.uid === user?.uid}
-                  isSharing={
-                    onlineClass?.screenSharerId === presenterParticipant.uid
-                  }
-                  nameOverride={presenterName}
-                  featured
-                />
-                <button
-                  onClick={() => setIsPresenterMinimized(true)}
-                  className="absolute right-4 top-4 rounded-full bg-black/45 p-2 text-white backdrop-blur transition-colors hover:bg-black/60"
-                >
-                  <Minimize2 className="h-4 w-4" />
-                </button>
-              </div>
-            ) : showTeacherPlaceholder ? (
-              /* Ustoz hali ulanmagan */
-              <div className="relative">
-                <TeacherPlaceholder />
-                <button
-                  onClick={() => setIsPresenterMinimized(true)}
-                  className="absolute right-4 top-4 rounded-full bg-black/45 p-2 text-white backdrop-blur transition-colors hover:bg-black/60"
-                >
-                  <Minimize2 className="h-4 w-4" />
-                </button>
-              </div>
-            ) : (
-              <div className="flex min-h-[320px] items-center justify-center rounded-3xl border border-white/10 bg-[#101827] md:min-h-[420px]">
-                <div className="text-center text-gray-400">
-                  <Camera className="mx-auto mb-3 h-12 w-12 text-gray-500" />
-                  Qatnashuvchilar ulanmoqda...
+              ) : presenterPeer ? (
+                <div className="relative">
+                  <ParticipantTile
+                    peer={presenterPeer}
+                    cameraStream={presenterStream}
+                    isLocal={isLocalPresenter}
+                    isSharing={presenterPeer.isScreenSharing}
+                    nameOverride={
+                      !isAdmin &&
+                      !isTeacher &&
+                      (presenterPeer.isAdmin || presenterPeer.isTeacher) &&
+                      presenterPeer.isVideoOff
+                        ? "Ustoz"
+                        : undefined
+                    }
+                    featured
+                  />
+                  <button
+                    onClick={() => setPresenterMinimized(true)}
+                    className="absolute right-3 top-3 rounded-xl bg-black/60 p-2 text-white backdrop-blur hover:bg-black/80"
+                  >
+                    <Minimize2 className="h-4 w-4" />
+                  </button>
                 </div>
-              </div>
-            ))}
+              ) : needTeacherPH ? (
+                <div className="relative">
+                  <TeacherPlaceholder />
+                  <button
+                    onClick={() => setPresenterMinimized(true)}
+                    className="absolute right-3 top-3 rounded-xl bg-black/60 p-2 text-white backdrop-blur hover:bg-black/80"
+                  >
+                    <Minimize2 className="h-4 w-4" />
+                  </button>
+                </div>
+              ) : (
+                <div className="flex min-h-[260px] items-center justify-center rounded-2xl border border-white/10 bg-[#101827]">
+                  <div className="text-center text-gray-500">
+                    <Camera className="mx-auto mb-2 h-10 w-10" />
+                    <p className="text-sm">Ulanmoqda...</p>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
 
-          {/* ── Gallery grid ── */}
-          <div className="rounded-3xl border border-white/5 bg-[#101827]/70 p-3">
-            <div className="mb-3 flex items-center justify-between">
+          {/* Gallery */}
+          <div className="rounded-2xl border border-white/5 bg-[#101827]/60 p-3">
+            <div className="mb-2 flex items-center justify-between">
               <div>
-                <p className="text-sm font-semibold text-white">
-                  {isPresenterMinimized
+                <p className="text-sm font-semibold">
+                  {presenterMinimized
                     ? "Barcha video oynalar"
-                    : "Jonli qatnashuvchilar"}
+                    : "Qatnashuvchilar"}
                 </p>
-                <p className="text-xs text-gray-400">
-                  Kamera yoqilgan foydalanuvchilar shu yerda ko'rinadi
+                <p className="text-xs text-gray-500">
+                  {galleryList.filter((p) => !p.isVideoOff).length} kamera yoqiq
                 </p>
               </div>
               <button
-                onClick={() => setIsPresenterMinimized((v) => !v)}
-                className="rounded-full bg-white/10 p-2 text-white transition-colors hover:bg-white/20"
+                onClick={() => setPresenterMinimized((v) => !v)}
+                className="rounded-xl bg-white/8 p-2 text-white hover:bg-white/15"
               >
-                {isPresenterMinimized ? (
+                {presenterMinimized ? (
                   <Maximize2 className="h-4 w-4" />
                 ) : (
                   <Minimize2 className="h-4 w-4" />
@@ -1685,96 +1397,98 @@ export function OnlineClassRoom() {
               </button>
             </div>
 
-            {galleryParticipants.length > 0 ||
-            (screenSharer && isPresenterMinimized) ? (
-              <div className="grid auto-rows-[minmax(180px,1fr)] gap-3 overflow-y-auto sm:grid-cols-2 xl:grid-cols-3">
-                {/* Screen share minimized holatda grid'da ko'rsatamiz */}
-                {screenSharer && isPresenterMinimized && (
-                  <div className="relative min-h-[180px] overflow-hidden rounded-3xl border border-white/10 bg-[#101827]">
-                    {screenSharerStream ? (
-                      <MediaView
-                        stream={screenSharerStream}
-                        muted={screenSharer.uid === user?.uid}
-                        className="absolute inset-0 h-full w-full bg-black object-contain"
+            {galleryList.length > 0 ||
+            ((screenSharerPeer || isLocalScreen) && presenterMinimized) ? (
+              <div className="grid auto-rows-[minmax(160px,1fr)] gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                {(screenSharerPeer || isLocalScreen) && presenterMinimized && (
+                  <div className="relative min-h-[160px] overflow-hidden rounded-2xl border border-white/10 bg-black">
+                    {screenShareStream ? (
+                      <VideoEl
+                        stream={screenShareStream}
+                        muted={isLocalScreen}
+                        className="h-full w-full object-contain"
                       />
-                    ) : null}
-                    <div className="absolute left-4 top-4 rounded-full bg-black/45 px-3 py-1.5 text-[11px] font-semibold backdrop-blur">
-                      Ustoz ekrani
-                    </div>
-                    {!screenSharerStream && (
-                      <div className="absolute inset-0 flex items-center justify-center text-sm text-gray-300">
-                        Screen share ulanmoqda...
+                    ) : (
+                      <div className="flex h-full items-center justify-center text-gray-500">
+                        <MonitorUp className="h-8 w-8" />
                       </div>
                     )}
+                    <div className="absolute left-2 top-2 rounded-lg bg-black/60 px-2 py-1 text-[10px] font-medium backdrop-blur">
+                      {isLocalScreen ? "Siz" : "Ustoz"} ekrani
+                    </div>
                   </div>
                 )}
 
-                {galleryParticipants.map((p) => (
-                  <ParticipantTile
-                    key={p.uid}
-                    participant={p}
-                    stream={getStreams(p.uid).camera}
-                    isLocal={p.uid === user?.uid}
-                    isSharing={onlineClass?.screenSharerId === p.uid}
-                    nameOverride={
-                      !isAdmin &&
-                      !isTeacher &&
-                      (p.isAdmin || p.isTeacher) &&
-                      p.isVideoOff
-                        ? "Ustoz"
-                        : undefined
-                    }
-                  />
-                ))}
+                {galleryList.map((p) => {
+                  const isLocal = p.socketId === mySocketIdRef.current;
+                  return (
+                    <ParticipantTile
+                      key={p.socketId}
+                      peer={p}
+                      cameraStream={getStreams(p.socketId).camera}
+                      isLocal={isLocal}
+                      isSharing={p.isScreenSharing}
+                      nameOverride={
+                        !isAdmin &&
+                        !isTeacher &&
+                        (p.isAdmin || p.isTeacher) &&
+                        p.isVideoOff
+                          ? "Ustoz"
+                          : undefined
+                      }
+                    />
+                  );
+                })}
               </div>
             ) : (
-              <div className="flex min-h-[120px] items-center justify-center text-center text-sm text-gray-400">
-                Hozircha boshqa qatnashuvchilar ulanmagan.
+              <div className="flex min-h-[120px] items-center justify-center text-sm text-gray-500">
+                Hozircha boshqa qatnashuvchilar ulanmagan
               </div>
             )}
           </div>
         </div>
 
-        {/* ── Participants sidebar ── */}
+        {/* Sidebar */}
         {showUserList && (
-          <aside className="fixed inset-x-3 bottom-3 z-30 max-h-[55vh] overflow-hidden rounded-3xl border border-white/10 bg-[#162033]/95 shadow-[0_24px_80px_rgba(0,0,0,0.35)] md:absolute md:inset-y-3 md:right-3 md:left-auto md:w-[min(340px,calc(100vw-24px))] md:max-h-none xl:relative xl:inset-auto xl:w-80">
-            <div className="flex items-center justify-between border-b border-white/10 px-5 py-4">
-              <h2 className="flex items-center gap-2 text-sm font-semibold">
+          <aside className="fixed inset-x-3 bottom-[88px] z-30 max-h-[50vh] overflow-hidden rounded-2xl border border-white/10 bg-[#162033]/95 shadow-2xl md:static md:bottom-auto md:max-h-none md:w-72 md:shrink-0 xl:w-80">
+            <div className="flex items-center justify-between border-b border-white/8 px-4 py-3">
+              <span className="flex items-center gap-2 text-sm font-semibold">
                 <Users className="h-4 w-4 text-cyan-300" />
-                Qatnashuvchilar ({participants.length})
-              </h2>
+                Qatnashuvchilar ({allPeers.length})
+              </span>
               <button
                 onClick={() => setShowUserList(false)}
-                className="rounded-full p-2 text-gray-400 hover:bg-white/10 hover:text-white"
+                className="rounded-lg p-1.5 text-gray-400 hover:bg-white/10"
               >
                 <X className="h-4 w-4" />
               </button>
             </div>
-
-            <div className="max-h-full overflow-y-auto p-3">
-              {participants.map((p) => {
-                const self = p.uid === user?.uid;
+            <div
+              className="overflow-y-auto p-2"
+              style={{ maxHeight: "calc(100% - 52px)" }}
+            >
+              {allPeers.map((p) => {
+                const self = p.socketId === mySocketIdRef.current;
                 const canKick =
                   (isAdmin || isTeacher) && !self && !p.isAdmin && !p.isTeacher;
-
                 return (
                   <div
-                    key={p.uid}
-                    className={`mb-2 flex items-center justify-between rounded-2xl border px-3 py-3
-                      ${
-                        p.isSpeaking
-                          ? "border-emerald-400/40 bg-emerald-500/10"
-                          : "border-white/5 bg-white/[0.03]"
-                      }`}
+                    key={p.socketId}
+                    className={[
+                      "mb-1.5 flex items-center justify-between rounded-xl border px-3 py-2.5",
+                      p.isSpeaking
+                        ? "border-emerald-400/30 bg-emerald-500/8"
+                        : "border-white/5 bg-white/[0.02]",
+                    ].join(" ")}
                   >
-                    <div className="flex min-w-0 items-center gap-3">
+                    <div className="flex min-w-0 items-center gap-2.5">
                       <div
-                        className={`relative flex h-10 w-10 items-center justify-center overflow-hidden rounded-full text-sm font-bold
-                          ${
-                            p.isAdmin || p.isTeacher
-                              ? "bg-gradient-to-br from-blue-500 to-cyan-500 text-white"
-                              : "bg-white/10 text-white"
-                          }`}
+                        className={[
+                          "flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-full text-xs font-bold",
+                          p.isAdmin || p.isTeacher
+                            ? "bg-gradient-to-br from-blue-500 to-cyan-400 text-white"
+                            : "bg-white/10 text-white",
+                        ].join(" ")}
                       >
                         {p.photoURL ? (
                           <img
@@ -1782,8 +1496,9 @@ export function OnlineClassRoom() {
                             alt={p.displayName}
                             className="h-full w-full object-cover"
                             onError={(e) => {
-                              (e.target as HTMLImageElement).style.display =
-                                "none";
+                              (
+                                e.currentTarget as HTMLImageElement
+                              ).style.display = "none";
                             }}
                           />
                         ) : (
@@ -1791,48 +1506,45 @@ export function OnlineClassRoom() {
                         )}
                       </div>
                       <div className="min-w-0">
-                        <p className="truncate text-sm font-semibold text-white">
+                        <p className="truncate text-xs font-semibold text-white">
                           {self ? "Siz" : p.displayName}
                         </p>
-                        <p className="truncate text-xs text-gray-400">
+                        <p className="truncate text-[10px] text-gray-400">
                           {p.isAdmin
                             ? "Admin"
                             : p.isTeacher
                               ? "Ustoz"
                               : "Talaba"}
-                          {onlineClass?.screenSharerId === p.uid
-                            ? " · Screen share"
-                            : ""}
+                          {p.isScreenSharing ? " · Screen" : ""}
                         </p>
                       </div>
                     </div>
-
-                    <div className="flex items-center gap-1">
-                      <div
-                        className={`rounded-full p-2 ${p.isMuted ? "text-red-300" : "text-emerald-300"}`}
+                    <div className="flex shrink-0 items-center gap-0.5">
+                      <span
+                        className={`p-1.5 ${p.isMuted ? "text-red-400" : "text-emerald-400"}`}
                       >
                         {p.isMuted ? (
-                          <MicOff className="h-4 w-4" />
+                          <MicOff className="h-3.5 w-3.5" />
                         ) : (
-                          <Mic className="h-4 w-4" />
+                          <Mic className="h-3.5 w-3.5" />
                         )}
-                      </div>
-                      <div
-                        className={`rounded-full p-2 ${p.isVideoOff ? "text-red-300" : "text-emerald-300"}`}
+                      </span>
+                      <span
+                        className={`p-1.5 ${p.isVideoOff ? "text-red-400" : "text-emerald-400"}`}
                       >
                         {p.isVideoOff ? (
-                          <VideoOff className="h-4 w-4" />
+                          <VideoOff className="h-3.5 w-3.5" />
                         ) : (
-                          <Video className="h-4 w-4" />
+                          <Video className="h-3.5 w-3.5" />
                         )}
-                      </div>
+                      </span>
                       {canKick && (
                         <button
-                          onClick={() => handleKickUser(p.uid)}
-                          className="rounded-full p-2 text-red-300 hover:bg-red-500/15"
+                          onClick={() => handleKick(p.socketId)}
+                          className="rounded-lg p-1.5 text-red-400 hover:bg-red-500/15"
                           title="Chiqarish"
                         >
-                          <PhoneOff className="h-4 w-4" />
+                          <PhoneOff className="h-3.5 w-3.5" />
                         </button>
                       )}
                     </div>
@@ -1844,36 +1556,31 @@ export function OnlineClassRoom() {
         )}
       </div>
 
-      {/* ── Controls bar ── */}
-      <div className="flex flex-col gap-3 border-t border-white/5 bg-[#162033]/90 px-4 py-4 md:h-24 md:flex-row md:items-center md:justify-between md:px-8 md:py-0">
-        <div className="hidden text-sm text-gray-400 md:block">
-          {!hasLocalAudio || !hasLocalVideo
-            ? "Qurilmalardan biri topilmadi, lekin jonli ulanish ishlayapti."
-            : isInitializing
-              ? "Kamera va mikrofon ulanmoqda..."
-              : "Kamera, mikrofon va jonli ulanish tayyor."}
-        </div>
+      {/* Controls */}
+      <footer className="flex shrink-0 flex-col gap-3 border-t border-white/5 bg-[#162033]/90 px-4 py-3 sm:h-20 sm:flex-row sm:items-center sm:justify-between sm:px-6 sm:py-0">
+        <p className="hidden text-xs text-gray-500 sm:block">
+          {isInitializing
+            ? "Kamera va mikrofon ulanmoqda..."
+            : !hasAudio && !hasVideo
+              ? "Media qurilma topilmadi"
+              : connected
+                ? "Ulanish tayyor ✓"
+                : "Qayta ulanmoqda..."}
+        </p>
 
-        <div className="order-2 mx-auto flex items-center gap-3 md:order-none md:gap-4">
-          {/* Mic */}
+        <div className="mx-auto flex items-center gap-3">
           <button
             onClick={handleToggleMute}
-            disabled={!hasLocalAudio}
-            title={
-              hasLocalAudio
-                ? isMuted
-                  ? "Mikrofonni yoqish"
-                  : "Mikrofonni o'chirish"
-                : "Mikrofon topilmadi"
-            }
-            className={`flex h-12 w-12 items-center justify-center rounded-full transition-colors
-              ${
-                !hasLocalAudio
-                  ? "cursor-not-allowed bg-gray-700/60 text-gray-500"
-                  : isMuted
-                    ? "bg-red-500 text-white hover:bg-red-400"
-                    : "bg-white/10 text-white hover:bg-white/20"
-              }`}
+            disabled={!hasAudio}
+            title={isMuted ? "Mikrofonni yoqish" : "Mikrofonni o'chirish"}
+            className={[
+              "flex h-11 w-11 items-center justify-center rounded-full transition-colors",
+              !hasAudio
+                ? "cursor-not-allowed bg-gray-700/50 text-gray-600"
+                : isMuted
+                  ? "bg-red-500 text-white hover:bg-red-400"
+                  : "bg-white/10 text-white hover:bg-white/20",
+            ].join(" ")}
           >
             {isMuted ? (
               <MicOff className="h-5 w-5" />
@@ -1882,25 +1589,18 @@ export function OnlineClassRoom() {
             )}
           </button>
 
-          {/* Camera */}
           <button
             onClick={handleToggleVideo}
-            disabled={!hasLocalVideo}
-            title={
-              hasLocalVideo
-                ? isVideoOff
-                  ? "Kamerani yoqish"
-                  : "Kamerani o'chirish"
-                : "Kamera topilmadi"
-            }
-            className={`flex h-12 w-12 items-center justify-center rounded-full transition-colors
-              ${
-                !hasLocalVideo
-                  ? "cursor-not-allowed bg-gray-700/60 text-gray-500"
-                  : isVideoOff
-                    ? "bg-red-500 text-white hover:bg-red-400"
-                    : "bg-white/10 text-white hover:bg-white/20"
-              }`}
+            disabled={!hasVideo}
+            title={isVideoOff ? "Kamerani yoqish" : "Kamerani o'chirish"}
+            className={[
+              "flex h-11 w-11 items-center justify-center rounded-full transition-colors",
+              !hasVideo
+                ? "cursor-not-allowed bg-gray-700/50 text-gray-600"
+                : isVideoOff
+                  ? "bg-red-500 text-white hover:bg-red-400"
+                  : "bg-white/10 text-white hover:bg-white/20",
+            ].join(" ")}
           >
             {isVideoOff ? (
               <VideoOff className="h-5 w-5" />
@@ -1909,58 +1609,49 @@ export function OnlineClassRoom() {
             )}
           </button>
 
-          {/* Screen share (faqat admin/ustoz) */}
           {(isAdmin || isTeacher) && (
             <button
-              onClick={() => void toggleScreenShare()}
-              title={
+              onClick={() => void toggleScreen()}
+              title={isScreenSharing ? "Ekranni to'xtatish" : "Ekran ulashish"}
+              className={[
+                "flex h-11 w-11 items-center justify-center rounded-full transition-colors",
                 isScreenSharing
-                  ? "Ekran ulashishni to'xtatish"
-                  : "Ekran ulashish"
-              }
-              className={`flex h-12 w-12 items-center justify-center rounded-full transition-colors
-                ${
-                  isScreenSharing
-                    ? "bg-cyan-500 text-slate-950 hover:bg-cyan-400"
-                    : "bg-white/10 text-white hover:bg-white/20"
-                }`}
+                  ? "bg-cyan-500 text-slate-950 hover:bg-cyan-400"
+                  : "bg-white/10 text-white hover:bg-white/20",
+              ].join(" ")}
             >
               <MonitorUp className="h-5 w-5" />
             </button>
           )}
 
-          {/* Leave / End */}
           {isAdmin || isTeacher ? (
             <button
-              onClick={() => void handleEndClass()}
-              className="inline-flex h-12 items-center gap-2 rounded-full bg-red-500 px-6 text-sm font-semibold text-white hover:bg-red-400"
+              onClick={handleEndClass}
+              className="flex h-11 items-center gap-2 rounded-full bg-red-500 px-5 text-sm font-semibold text-white hover:bg-red-400"
             >
-              <PhoneOff className="h-5 w-5" />
-              Darsni tugatish
+              <PhoneOff className="h-4 w-4" /> Darsni tugatish
             </button>
           ) : (
             <button
-              onClick={() => void handleLeave()}
-              className="inline-flex h-12 items-center gap-2 rounded-full bg-red-500 px-6 text-sm font-semibold text-white hover:bg-red-400"
+              onClick={handleLeave}
+              className="flex h-11 items-center gap-2 rounded-full bg-red-500 px-5 text-sm font-semibold text-white hover:bg-red-400"
             >
-              <PhoneOff className="h-5 w-5" />
-              Chiqish
+              <PhoneOff className="h-4 w-4" /> Chiqish
             </button>
           )}
         </div>
 
-        <div className="order-1 flex w-full justify-end md:order-none md:w-[110px]">
+        <div className="flex justify-end sm:w-28">
           {!showUserList && (
             <button
               onClick={() => setShowUserList(true)}
-              className="inline-flex items-center gap-2 rounded-full bg-white/10 px-4 py-2 text-sm font-medium text-white hover:bg-white/20"
+              className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-2 text-xs font-medium text-white hover:bg-white/20"
             >
-              <Users className="h-4 w-4" />
-              {participants.length}
+              <Users className="h-4 w-4" /> {allPeers.length}
             </button>
           )}
         </div>
-      </div>
+      </footer>
     </div>
   );
 }
