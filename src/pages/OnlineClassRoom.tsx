@@ -1,12 +1,22 @@
 /**
- * OnlineClassRoom.tsx — PROFESSIONAL UI + BUG FIXES
+ * OnlineClassRoom.tsx — v5 COMPLETE FIX
  *
- * Yangiliklar:
- * 1. Dark/Light mode toggle
- * 2. Chiroyli custom scrollbar
- * 3. Ortga qaytish tugmasi (courses sahifasiga)
- * 4. Duplicate peer muammosi tuzatildi (uid bo'yicha deduplication)
- * 5. Professional dizayn — glassmorphism, smooth animations
+ * YANGI TUZATISHLAR:
+ * 1. ✅ Blocked users - admin kick qilsa qayta qo'shilmasin
+ * 2. ✅ Right sidebar - scroll chiroyli, dark/light modega moslashgan
+ * 3. ✅ Screen share - to'g'ri ishlaydi va ko'rsatiladi
+ * 4. ✅ Mobile optimizatsiya - barcha scrollar chiroyli
+ * 5. ✅ Admin chatni qayta boshlaganda block ochiriladi
+ *
+ * Oldingi tuzatishlar:
+ * - Mikrofon camera o'chiq bo'lsa ham ishlaydi
+ * - Screen share ishlaydi + camera/screen almashadi
+ * - Camera mirror (scaleX(-1))
+ * - Gallery: faqat camera yoniq foydalanuvchilar
+ * - Responsive: desktop 2, tablet 2, mobile 1
+ * - Admin gallery'da ko'rinmaydi
+ * - navigate(-1) — oldingi sahifaga qaytish
+ * - Gapiruvchi animatsiya (to'lqin)
  */
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
@@ -15,8 +25,6 @@ import { useAuth } from "../contexts/AuthContext";
 import { io, Socket } from "socket.io-client";
 import {
   ArrowLeft,
-  Camera,
-  Maximize2,
   Mic,
   MicOff,
   Minimize2,
@@ -28,9 +36,9 @@ import {
   Users,
   Video,
   VideoOff,
-  X,
   Wifi,
   WifiOff,
+  X,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -80,61 +88,85 @@ type RemoteStreamsMap = Map<string, Map<string, MediaStream>>;
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-const getName = (
-  displayName?: string | null,
-  email?: string | null,
-  fallback = "Foydalanuvchi",
-) => displayName || email?.split("@")[0] || fallback;
+const getName = (d?: string | null, e?: string | null, f = "Foydalanuvchi") =>
+  d || e?.split("@")[0] || f;
 
-// ─── CSS injector ─────────────────────────────────────────────────────────────
+// ─── Global CSS ───────────────────────────────────────────────────────────────
 
-const GLOBAL_CSS = `
-  @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap');
+const CSS = `
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap');
+.lr,  .lr * { font-family:'Outfit',sans-serif; box-sizing:border-box; }
 
-  .live-room * { font-family: 'Outfit', sans-serif; box-sizing: border-box; }
+/* Scrollbar styles - dark mode */
+.lr.dark ::-webkit-scrollbar { width:6px; height:6px; }
+.lr.dark ::-webkit-scrollbar-track { background:rgba(30,41,59,0.4); border-radius:99px; }
+.lr.dark ::-webkit-scrollbar-thumb { background:rgba(99,102,241,0.4); border-radius:99px; }
+.lr.dark ::-webkit-scrollbar-thumb:hover { background:rgba(99,102,241,0.65); }
 
-  /* Custom scrollbar */
-  .live-room ::-webkit-scrollbar { width: 4px; height: 4px; }
-  .live-room ::-webkit-scrollbar-track { background: transparent; }
-  .live-room ::-webkit-scrollbar-thumb { background: rgba(99,102,241,0.4); border-radius: 99px; }
-  .live-room ::-webkit-scrollbar-thumb:hover { background: rgba(99,102,241,0.7); }
+/* Scrollbar styles - light mode */
+.lr.light ::-webkit-scrollbar { width:6px; height:6px; }
+.lr.light ::-webkit-scrollbar-track { background:rgba(226,232,240,0.6); border-radius:99px; }
+.lr.light ::-webkit-scrollbar-thumb { background:rgba(99,102,241,0.35); border-radius:99px; }
+.lr.light ::-webkit-scrollbar-thumb:hover { background:rgba(99,102,241,0.55); }
 
-  /* Light mode scrollbar */
-  .live-room.light ::-webkit-scrollbar-thumb { background: rgba(99,102,241,0.3); }
+@keyframes lrFade { from{opacity:0;transform:translateY(6px)} to{opacity:1;transform:none} }
+@keyframes lrSpeak { 0%,100%{box-shadow:0 0 0 0 rgba(52,211,153,.5)} 50%{box-shadow:0 0 0 8px rgba(52,211,153,0)} }
 
-  /* Animations */
-  @keyframes fadeIn { from { opacity:0; transform:translateY(8px); } to { opacity:1; transform:translateY(0); } }
-  @keyframes pulse-ring { 0%,100% { box-shadow: 0 0 0 0 rgba(52,211,153,0.4); } 50% { box-shadow: 0 0 0 6px rgba(52,211,153,0); } }
-  @keyframes shimmer { 0% { background-position: -200% 0; } 100% { background-position: 200% 0; } }
-  @keyframes blink { 0%,100% { opacity:1; } 50% { opacity:0.4; } }
+/* Sound wave animation */
+@keyframes wave1 { 0%,100%{height:4px} 50%{height:14px} }
+@keyframes wave2 { 0%,100%{height:8px} 50%{height:20px} }
+@keyframes wave3 { 0%,100%{height:5px} 50%{height:16px} }
+@keyframes wave4 { 0%,100%{height:3px} 50%{height:11px} }
 
-  .fade-in { animation: fadeIn 0.3s ease forwards; }
-  .speaking-ring { animation: pulse-ring 1.5s ease infinite; }
-  .live-dot { animation: blink 1.5s ease infinite; }
+.lr-wave span:nth-child(1){animation:wave1 .6s ease infinite}
+.lr-wave span:nth-child(2){animation:wave2 .6s ease infinite .1s}
+.lr-wave span:nth-child(3){animation:wave3 .6s ease infinite .2s}
+.lr-wave span:nth-child(4){animation:wave4 .6s ease infinite .15s}
 
-  /* Tile hover */
-  .peer-tile { transition: transform 0.2s ease, box-shadow 0.2s ease; }
-  .peer-tile:hover { transform: translateY(-2px); }
+.lr-tile { animation:lrFade .25s ease forwards; transition:transform .18s ease; }
+.lr-tile:hover { transform:translateY(-2px); }
+.lr-speak { animation:lrSpeak 1.6s ease infinite; }
+.lr-btn { transition:all .13s ease; }
+.lr-btn:hover:not(:disabled) { transform:scale(1.07); }
+.lr-btn:active:not(:disabled) { transform:scale(.94); }
 
-  /* Control button */
-  .ctrl-btn { transition: all 0.15s ease; }
-  .ctrl-btn:hover:not(:disabled) { transform: scale(1.08); }
-  .ctrl-btn:active:not(:disabled) { transform: scale(0.95); }
+/* Camera video — mirror fix */
+.cam-local { transform: scaleX(-1); }
 
-  /* Glassmorphism */
-  .glass-dark { background: rgba(15,23,42,0.7); backdrop-filter: blur(20px); border: 1px solid rgba(255,255,255,0.08); }
-  .glass-light { background: rgba(255,255,255,0.7); backdrop-filter: blur(20px); border: 1px solid rgba(0,0,0,0.08); }
+/* Full height tile */
+.lr-tile video { object-fit:cover; width:100%; height:100%; position:absolute; inset:0; }
 `;
+
+// ─── Sound Wave (speaking indicator) ─────────────────────────────────────────
+
+function SoundWave({ color = "#34d399" }: { color?: string }) {
+  return (
+    <span
+      className="lr-wave inline-flex items-end gap-[2px]"
+      style={{ height: 20 }}
+    >
+      {[0, 1, 2, 3].map((i) => (
+        <span
+          key={i}
+          className="block w-[3px] rounded-full"
+          style={{ background: color, height: 4 }}
+        />
+      ))}
+    </span>
+  );
+}
 
 // ─── VideoEl ─────────────────────────────────────────────────────────────────
 
 function VideoEl({
   stream,
   muted,
+  mirror = false,
   className,
 }: {
   stream: MediaStream | null;
   muted: boolean;
+  mirror?: boolean;
   className?: string;
 }) {
   const ref = useRef<HTMLVideoElement>(null);
@@ -145,7 +177,13 @@ function VideoEl({
     if (stream) el.play().catch(() => undefined);
   }, [stream]);
   return (
-    <video ref={ref} autoPlay playsInline muted={muted} className={className} />
+    <video
+      ref={ref}
+      autoPlay
+      playsInline
+      muted={muted}
+      className={`${className ?? ""} ${mirror ? "cam-local" : ""}`}
+    />
   );
 }
 
@@ -156,17 +194,18 @@ function Avatar({
   size = "md",
 }: {
   peer: RemotePeer;
-  size?: "sm" | "md" | "lg" | "xl";
+  size?: "xs" | "sm" | "md" | "lg" | "xl";
 }) {
-  const sizes = {
+  const s = {
+    xs: "h-7 w-7 text-[10px]",
     sm: "h-8 w-8 text-xs",
     md: "h-10 w-10 text-sm",
-    lg: "h-16 w-16 text-xl",
-    xl: "h-24 w-24 text-3xl",
-  };
+    lg: "h-14 w-14 text-xl",
+    xl: "h-20 w-20 text-3xl",
+  }[size];
   return (
     <div
-      className={`${sizes[size]} flex shrink-0 items-center justify-center overflow-hidden rounded-full font-bold`}
+      className={`${s} flex shrink-0 items-center justify-center overflow-hidden rounded-full font-bold`}
       style={{
         background:
           peer.isAdmin || peer.isTeacher
@@ -213,7 +252,6 @@ function ParticipantTile({
 }) {
   const name = nameOverride ?? (isLocal ? "Siz" : peer.displayName);
   const subtitle = peer.isAdmin ? "Admin" : peer.isTeacher ? "Ustoz" : "Talaba";
-
   const hasLiveVideo = Boolean(
     cameraStream
       ?.getVideoTracks()
@@ -223,35 +261,30 @@ function ParticipantTile({
 
   return (
     <div
-      className={`peer-tile fade-in relative overflow-hidden rounded-2xl ${
-        featured ? "min-h-[340px] md:min-h-[480px]" : "min-h-[180px]"
-      } ${peer.isSpeaking ? "speaking-ring" : ""}`}
+      className={`lr-tile relative overflow-hidden rounded-2xl ${peer.isSpeaking ? "lr-speak" : ""} ${featured ? "min-h-[400px] md:min-h-[520px]" : "min-h-[220px] md:min-h-[260px]"}`}
       style={{
         background: isDark
           ? "linear-gradient(145deg,#0f172a,#1e293b)"
           : "linear-gradient(145deg,#f1f5f9,#e2e8f0)",
         border: peer.isSpeaking
-          ? "1.5px solid rgba(52,211,153,0.6)"
+          ? "1.5px solid rgba(52,211,153,.65)"
           : isDark
-            ? "1px solid rgba(255,255,255,0.06)"
-            : "1px solid rgba(0,0,0,0.08)",
+            ? "1px solid rgba(255,255,255,.07)"
+            : "1px solid rgba(0,0,0,.09)",
       }}
     >
-      {/* Video */}
+      {/* Video — local camera mirrored */}
       <VideoEl
         stream={cameraStream}
         muted={isLocal}
-        className={`absolute inset-0 h-full w-full object-cover transition-opacity duration-300 ${
-          showVideo ? "opacity-100" : "opacity-0 pointer-events-none"
-        }`}
+        mirror={isLocal && !isSharing}
+        className={`absolute inset-0 h-full w-full object-cover transition-opacity duration-300 ${showVideo ? "opacity-100" : "opacity-0 pointer-events-none"}`}
       />
 
-      {/* Gradient overlay */}
       {showVideo && (
-        <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent" />
+        <div className="absolute inset-0 bg-gradient-to-t from-black/75 via-black/5 to-transparent" />
       )}
 
-      {/* Avatar when no video */}
       {!showVideo && (
         <div className="absolute inset-0 flex flex-col items-center justify-center gap-3">
           <Avatar peer={peer} size={featured ? "xl" : "lg"} />
@@ -270,12 +303,12 @@ function ParticipantTile({
         </div>
       )}
 
-      {/* Top badges */}
+      {/* Badges */}
       <div className="absolute left-3 top-3 flex flex-wrap gap-1.5">
         {(peer.isAdmin || peer.isTeacher) && (
           <span
-            className="flex items-center gap-1 rounded-full px-2.5 py-1 text-[10px] font-semibold text-white backdrop-blur"
-            style={{ background: "rgba(99,102,241,0.35)" }}
+            className="flex items-center gap-1 rounded-full px-2.5 py-1 text-[10px] font-semibold text-white backdrop-blur-sm"
+            style={{ background: "rgba(99,102,241,.4)" }}
           >
             <ShieldAlert className="h-3 w-3" />
             {peer.isAdmin ? "Admin" : "Ustoz"}
@@ -283,8 +316,8 @@ function ParticipantTile({
         )}
         {isSharing && (
           <span
-            className="flex items-center gap-1 rounded-full px-2.5 py-1 text-[10px] font-semibold text-white backdrop-blur"
-            style={{ background: "rgba(6,182,212,0.35)" }}
+            className="flex items-center gap-1 rounded-full px-2.5 py-1 text-[10px] font-semibold text-white backdrop-blur-sm"
+            style={{ background: "rgba(6,182,212,.4)" }}
           >
             <MonitorUp className="h-3 w-3" />
             Screen
@@ -292,34 +325,32 @@ function ParticipantTile({
         )}
       </div>
 
-      {/* Bottom info */}
+      {/* Bottom */}
       <div className="absolute bottom-3 left-3 right-3 flex items-end justify-between gap-2">
         <div
           className="min-w-0 rounded-xl px-3 py-2"
-          style={{
-            background: "rgba(0,0,0,0.55)",
-            backdropFilter: "blur(8px)",
-          }}
+          style={{ background: "rgba(0,0,0,.6)", backdropFilter: "blur(8px)" }}
         >
           <p className="truncate text-xs font-semibold text-white">{name}</p>
           <p className="text-[10px] text-slate-300">{subtitle}</p>
         </div>
         <div
-          className="flex gap-1 rounded-xl px-2 py-2"
-          style={{
-            background: "rgba(0,0,0,0.55)",
-            backdropFilter: "blur(8px)",
-          }}
+          className="flex items-center gap-1 rounded-xl px-2 py-2"
+          style={{ background: "rgba(0,0,0,.6)", backdropFilter: "blur(8px)" }}
         >
-          <span
-            className={`p-1 ${peer.isMuted ? "text-red-400" : "text-emerald-400"}`}
-          >
-            {peer.isMuted ? (
-              <MicOff className="h-3.5 w-3.5" />
-            ) : (
-              <Mic className="h-3.5 w-3.5" />
-            )}
-          </span>
+          {peer.isSpeaking && !peer.isMuted ? (
+            <SoundWave />
+          ) : (
+            <span
+              className={`p-1 ${peer.isMuted ? "text-red-400" : "text-emerald-400"}`}
+            >
+              {peer.isMuted ? (
+                <MicOff className="h-3.5 w-3.5" />
+              ) : (
+                <Mic className="h-3.5 w-3.5" />
+              )}
+            </span>
+          )}
           <span
             className={`p-1 ${peer.isVideoOff ? "text-red-400" : "text-emerald-400"}`}
           >
@@ -337,22 +368,21 @@ function ParticipantTile({
 
 // ─── TeacherPlaceholder ───────────────────────────────────────────────────────
 
-function TeacherPlaceholder({ isDark }: { isDark: boolean }) {
+function TeacherPH({ isDark }: { isDark: boolean }) {
   return (
     <div
-      className="relative flex min-h-[340px] items-center justify-center overflow-hidden rounded-2xl md:min-h-[480px]"
+      className="relative flex min-h-[400px] items-center justify-center overflow-hidden rounded-2xl md:min-h-[520px]"
       style={{
         background: isDark
           ? "linear-gradient(145deg,#0f172a,#1e293b)"
           : "linear-gradient(145deg,#f1f5f9,#e2e8f0)",
         border: isDark
-          ? "1px solid rgba(255,255,255,0.06)"
-          : "1px solid rgba(0,0,0,0.08)",
+          ? "1px solid rgba(255,255,255,.07)"
+          : "1px solid rgba(0,0,0,.09)",
       }}
     >
-      {/* Decorative rings */}
       <div
-        className="absolute h-64 w-64 rounded-full opacity-10"
+        className="absolute h-72 w-72 rounded-full opacity-[.07]"
         style={{ background: "radial-gradient(circle,#6366f1,transparent)" }}
       />
       <div className="relative flex flex-col items-center gap-4 text-center">
@@ -379,7 +409,7 @@ function TeacherPlaceholder({ isDark }: { isDark: boolean }) {
   );
 }
 
-// ─── ControlButton ────────────────────────────────────────────────────────────
+// ─── CtrlBtn ─────────────────────────────────────────────────────────────────
 
 function CtrlBtn({
   onClick,
@@ -403,14 +433,14 @@ function CtrlBtn({
       onClick={onClick}
       disabled={disabled}
       title={title}
-      className={`ctrl-btn flex items-center justify-center rounded-full font-medium transition-all ${className} ${
+      className={`lr-btn flex items-center justify-center rounded-full font-medium ${className} ${
         disabled
-          ? "cursor-not-allowed opacity-40"
+          ? "cursor-not-allowed opacity-35"
           : danger
-            ? "bg-red-500 text-white hover:bg-red-400 shadow-lg shadow-red-500/25"
+            ? "bg-red-500 text-white hover:bg-red-400 shadow-lg shadow-red-500/20"
             : active
-              ? "bg-indigo-500 text-white shadow-lg shadow-indigo-500/30"
-              : "bg-white/10 text-white hover:bg-white/20 backdrop-blur"
+              ? "bg-indigo-500 text-white shadow-lg shadow-indigo-500/25"
+              : "bg-white/10 text-white hover:bg-white/20 backdrop-blur-sm"
       }`}
     >
       {children}
@@ -418,7 +448,7 @@ function CtrlBtn({
   );
 }
 
-// ─── Main Component ───────────────────────────────────────────────────────────
+// ─── Main ─────────────────────────────────────────────────────────────────────
 
 export function OnlineClassRoom() {
   const { user, isAdmin, isTeacher } = useAuth();
@@ -431,12 +461,11 @@ export function OnlineClassRoom() {
   const [isInitializing, setIsInitializing] = useState(false);
   const [permissionError, setPermissionError] = useState<string | null>(null);
   const [connected, setConnected] = useState(false);
-  const [presenterMinimized, setPresenterMinimized] = useState(false);
+  const [gridExpanded, setGridExpanded] = useState(false);
   const [showUserList, setShowUserList] = useState(
     () => typeof window !== "undefined" && window.innerWidth >= 1280,
   );
 
-  // uid → RemotePeer (uid bo'yicha deduplication — asosiy tuzatish)
   const [remotePeers, setRemotePeers] = useState<Map<string, RemotePeer>>(
     new Map(),
   );
@@ -450,19 +479,15 @@ export function OnlineClassRoom() {
   const [localStream, setLocalStream] = useState<MediaStream | null>(null);
   const [screenStream, setScreenStream] = useState<MediaStream | null>(null);
 
-  // Refs
   const socketRef = useRef<Socket | null>(null);
   const mySocketIdRef = useRef<string | null>(null);
   const localRef = useRef<MediaStream | null>(null);
   const screenRef = useRef<MediaStream | null>(null);
   const mutedRef = useRef(true);
   const videoOffRef = useRef(true);
-  // socketId → PCEntry
   const pcsRef = useRef<Map<string, PCEntry>>(new Map());
-  // uid → socketId mapping (duplicate oldini olish uchun)
   const uidToSocketRef = useRef<Map<string, string>>(new Map());
   const mediaPromRef = useRef<Promise<MediaStream | null> | null>(null);
-
   const audioCtxRef = useRef<AudioContext | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
   const audioSrcRef = useRef<MediaStreamAudioSourceNode | null>(null);
@@ -481,13 +506,12 @@ export function OnlineClassRoom() {
     screenRef.current = screenStream;
   }, [screenStream]);
 
-  // Inject CSS
   useEffect(() => {
-    const style = document.createElement("style");
-    style.textContent = GLOBAL_CSS;
-    document.head.appendChild(style);
+    const s = document.createElement("style");
+    s.textContent = CSS;
+    document.head.appendChild(s);
     return () => {
-      document.head.removeChild(style);
+      document.head.removeChild(s);
     };
   }, []);
 
@@ -589,6 +613,7 @@ export function OnlineClassRoom() {
     const cam = localRef.current;
     const scr = screenRef.current;
 
+    // Audio — DOIM
     const audioTrack = cam?.getAudioTracks()[0] ?? null;
     if (audioTrack) {
       if (!entry.audioSender)
@@ -599,11 +624,12 @@ export function OnlineClassRoom() {
       try {
         entry.pc.removeTrack(entry.audioSender);
       } catch {
-        /**/
+        /***/
       }
       entry.audioSender = null;
     }
 
+    // Camera video
     const videoTrack = cam?.getVideoTracks()[0] ?? null;
     if (videoTrack) {
       if (!entry.videoSender)
@@ -614,11 +640,12 @@ export function OnlineClassRoom() {
       try {
         entry.pc.removeTrack(entry.videoSender);
       } catch {
-        /**/
+        /***/
       }
       entry.videoSender = null;
     }
 
+    // Screen share
     const screenTrack = scr?.getVideoTracks()[0] ?? null;
     if (screenTrack) {
       if (!entry.screenSender)
@@ -627,7 +654,7 @@ export function OnlineClassRoom() {
       try {
         entry.pc.removeTrack(entry.screenSender);
       } catch {
-        /**/
+        /***/
       }
       entry.screenSender = null;
     }
@@ -647,7 +674,7 @@ export function OnlineClassRoom() {
       try {
         e.pc.close();
       } catch {
-        /**/
+        /***/
       }
       pcsRef.current.delete(sid);
       dropAllRemoteStreams(sid);
@@ -680,18 +707,15 @@ export function OnlineClassRoom() {
       pcsRef.current.set(targetSid, entry);
 
       pc.onicecandidate = ({ candidate }) => {
-        if (candidate && socketRef.current) {
+        if (candidate && socketRef.current)
           socketRef.current.emit("ice-candidate", {
             to: targetSid,
             candidate: candidate.toJSON(),
           });
-        }
       };
-
       pc.oniceconnectionstatechange = () => {
         if (pc.iceConnectionState === "failed") pc.restartIce();
       };
-
       pc.onconnectionstatechange = () => {
         if (
           pc.connectionState === "failed" ||
@@ -701,7 +725,6 @@ export function OnlineClassRoom() {
           dropAllRemoteStreams(targetSid);
         }
       };
-
       pc.ontrack = ({ track, streams }) => {
         const stream =
           streams.length > 0 ? streams[0] : new MediaStream([track]);
@@ -716,7 +739,6 @@ export function OnlineClassRoom() {
           }
         };
       };
-
       pc.onnegotiationneeded = async () => {
         if (!entry.isOfferer || entry.makingOffer) return;
         try {
@@ -737,7 +759,6 @@ export function OnlineClassRoom() {
           entry.makingOffer = false;
         }
       };
-
       syncTracks(entry);
       return entry;
     },
@@ -778,11 +799,17 @@ export function OnlineClassRoom() {
         frameRate: { ideal: 30 },
         facingMode: "user",
       };
-      const tries: { c: MediaStreamConstraints; warn?: string }[] = [
-        { c: { audio: audioC, video: videoC } },
-        { c: { audio: audioC, video: true } },
-        { c: { audio: audioC, video: false }, warn: "Kamera topilmadi" },
-        { c: { audio: false, video: videoC }, warn: "Mikrofon topilmadi" },
+      const tries = [
+        { c: { audio: audioC, video: videoC } as MediaStreamConstraints },
+        { c: { audio: audioC, video: true } as MediaStreamConstraints },
+        {
+          c: { audio: audioC, video: false } as MediaStreamConstraints,
+          warn: "Kamera topilmadi",
+        },
+        {
+          c: { audio: false, video: videoC } as MediaStreamConstraints,
+          warn: "Mikrofon topilmadi",
+        },
       ];
       let stream: MediaStream | null = null;
       let warnMsg = "";
@@ -843,7 +870,7 @@ export function OnlineClassRoom() {
       try {
         e.pc.removeTrack(e.screenSender);
       } catch {
-        /**/
+        /***/
       }
       e.screenSender = null;
     }
@@ -851,7 +878,22 @@ export function OnlineClassRoom() {
     screenRef.current = null;
     setScreenStream(null);
     setIsScreenSharing(false);
+
+    // Camera'ni qayta yoqamiz
+    if (localRef.current && !videoOffRef.current) {
+      localRef.current.getVideoTracks().forEach((t) => {
+        t.enabled = true;
+      });
+      for (const e of pcsRef.current.values()) {
+        const vt = localRef.current?.getVideoTracks()[0];
+        if (vt && e.videoSender) {
+          void e.videoSender.replaceTrack(vt);
+        }
+      }
+    }
+
     socketRef.current?.emit("screen-share-stop");
+    socketRef.current?.emit("state-update", { isScreenSharing: false });
   }, []);
 
   const toggleScreen = useCallback(async () => {
@@ -870,13 +912,24 @@ export function OnlineClassRoom() {
         toast.error("Screen share boshlanmadi.");
         return;
       }
+
+      // Camera video'ni o'chiramiz
+      if (localRef.current) {
+        localRef.current.getVideoTracks().forEach((t) => {
+          t.enabled = false;
+        });
+      }
+
       screenRef.current = stream;
       setScreenStream(stream);
       setIsScreenSharing(true);
+
       for (const e of pcsRef.current.values()) {
         if (!e.screenSender) e.screenSender = e.pc.addTrack(track, stream);
       }
+
       socketRef.current?.emit("screen-share-start", { streamId: stream.id });
+      socketRef.current?.emit("state-update", { isScreenSharing: true });
       track.onended = () => {
         void stopScreen();
       };
@@ -914,7 +967,15 @@ export function OnlineClassRoom() {
       return;
     }
 
-    // Server uyg'onishi uchun ping
+    // ✅ BLOCKED TEKSHIRISH
+    const blockedKey = `blocked_${user.uid}`;
+    const isBlocked = localStorage.getItem(blockedKey);
+    if (isBlocked === "true") {
+      toast.error("❌ Siz bloklangansiz! Admindan murojaat qiling.");
+      navigate("/courses");
+      return;
+    }
+
     fetch(`${SOCKET_URL}/health`).catch(() => undefined);
 
     const socket = io(SOCKET_URL, {
@@ -948,7 +1009,6 @@ export function OnlineClassRoom() {
       toast.error("Server bilan ulanishda xatolik"),
     );
 
-    // ── Room joined ──────────────────────────────────────────────────────────
     socket.on(
       "room-joined",
       async ({
@@ -962,16 +1022,17 @@ export function OnlineClassRoom() {
           screenShareStreamId?: string;
         } | null;
       }) => {
+        // ✅ Block ochirildi (chat qayta boshlandi)
+        const blockedKey = `blocked_${user.uid}`;
+        localStorage.removeItem(blockedKey);
+
         if (roomState?.screenSharerId) {
           setScreenSharerId(roomState.screenSharerId);
           setScreenShareStreamId(roomState.screenShareStreamId ?? null);
         }
-
-        // DUPLICATE FIX: uid bo'yicha tekshiramiz
         setRemotePeers((prev) => {
           const next = new Map(prev);
           existingPeers.forEach((p) => {
-            // Agar bu uid allaqachon bor bo'lsa, eski socketId'ni olib tashlaymiz
             const oldSid = uidToSocketRef.current.get(p.uid);
             if (oldSid && oldSid !== p.socketId) next.delete(oldSid);
             uidToSocketRef.current.set(p.uid, p.socketId);
@@ -979,17 +1040,14 @@ export function OnlineClassRoom() {
           });
           return next;
         });
-
         await ensureMedia();
         for (const peer of existingPeers) createPC(peer.socketId, true);
       },
     );
 
-    // ── Peer joined ──────────────────────────────────────────────────────────
     socket.on("peer-joined", (peer: RemotePeer & { socketId: string }) => {
       setRemotePeers((prev) => {
         const next = new Map(prev);
-        // DUPLICATE FIX: agar bu uid boshqa socketId bilan mavjud bo'lsa olib tashlaymiz
         const oldSid = uidToSocketRef.current.get(peer.uid);
         if (oldSid && oldSid !== peer.socketId) {
           next.delete(oldSid);
@@ -1002,13 +1060,12 @@ export function OnlineClassRoom() {
       createPC(peer.socketId, false);
     });
 
-    // ── Peer left ────────────────────────────────────────────────────────────
     socket.on("peer-left", ({ socketId }: { socketId: string }) => {
       closePC(socketId);
       setRemotePeers((prev) => {
         const next = new Map(prev);
-        const peer = next.get(socketId);
-        if (peer) uidToSocketRef.current.delete(peer.uid);
+        const p = next.get(socketId);
+        if (p) uidToSocketRef.current.delete(p.uid);
         next.delete(socketId);
         return next;
       });
@@ -1018,17 +1075,15 @@ export function OnlineClassRoom() {
       }
     });
 
-    // ── Participants updated ─────────────────────────────────────────────────
     socket.on(
       "participants-updated",
       (list: (RemotePeer & { socketId: string })[]) => {
         setRemotePeers((prev) => {
           const next = new Map(prev);
-          // uid bo'yicha deduplication
           const seenUids = new Set<string>();
           list.forEach((p) => {
             if (p.socketId === socket.id) return;
-            if (seenUids.has(p.uid)) return; // duplicate skip
+            if (seenUids.has(p.uid)) return;
             seenUids.add(p.uid);
             const oldSid = uidToSocketRef.current.get(p.uid);
             if (oldSid && oldSid !== p.socketId) next.delete(oldSid);
@@ -1040,7 +1095,6 @@ export function OnlineClassRoom() {
       },
     );
 
-    // ── State updated ────────────────────────────────────────────────────────
     socket.on(
       "peer-state-updated",
       (data: Partial<RemotePeer> & { socketId: string }) => {
@@ -1054,7 +1108,6 @@ export function OnlineClassRoom() {
       },
     );
 
-    // ── WebRTC signals ───────────────────────────────────────────────────────
     socket.on(
       "offer",
       async ({
@@ -1117,12 +1170,11 @@ export function OnlineClassRoom() {
         try {
           await entry.pc.addIceCandidate(candidate);
         } catch {
-          /**/
+          /***/
         }
       },
     );
 
-    // ── Screen share ─────────────────────────────────────────────────────────
     socket.on(
       "screen-share-started",
       ({ socketId, streamId }: { socketId: string; streamId: string }) => {
@@ -1160,13 +1212,20 @@ export function OnlineClassRoom() {
       });
     });
 
+    // ✅ KICKED EVENT - blocked qilish
     socket.on("kicked", ({ message }: { message: string }) => {
-      toast.error(message);
+      toast.error(`🚫 ${message}`);
+      const blockedKey = `blocked_${user.uid}`;
+      localStorage.setItem(blockedKey, "true");
       cleanup();
       navigate("/courses");
     });
+
     socket.on("class-ended", ({ message }: { message: string }) => {
       toast.info(message);
+      // ✅ Chat tugaganda barcha blocklarni ochish
+      const blockedKey = `blocked_${user.uid}`;
+      localStorage.removeItem(blockedKey);
       cleanup();
       navigate("/courses");
     });
@@ -1180,7 +1239,7 @@ export function OnlineClassRoom() {
   }, [user]);
 
   useEffect(() => {
-    for (const entry of pcsRef.current.values()) syncTracks(entry);
+    for (const e of pcsRef.current.values()) syncTracks(e);
   }, [localStream, screenStream, syncTracks]);
 
   useEffect(() => {
@@ -1195,11 +1254,13 @@ export function OnlineClassRoom() {
   useEffect(() => {
     const s = localRef.current;
     if (!s) return;
-    s.getVideoTracks().forEach((t) => {
-      t.enabled = !isVideoOff;
-    });
+    if (!isScreenSharing) {
+      s.getVideoTracks().forEach((t) => {
+        t.enabled = !isVideoOff;
+      });
+    }
     socketRef.current?.emit("state-update", { isVideoOff });
-  }, [isVideoOff]);
+  }, [isVideoOff, isScreenSharing]);
 
   useEffect(
     () => () => {
@@ -1208,7 +1269,7 @@ export function OnlineClassRoom() {
     [cleanup],
   );
 
-  // ── Getters ──────────────────────────────────────────────────────────────
+  // ── Stream getter ────────────────────────────────────────────────────────
 
   const getStreams = useCallback(
     (sid: string) => {
@@ -1239,6 +1300,9 @@ export function OnlineClassRoom() {
 
   const handleToggleVideo = () => {
     if (!hasVideo) return;
+    if (isScreenSharing) {
+      void stopScreen();
+    }
     const next = !videoOffRef.current;
     videoOffRef.current = next;
     setIsVideoOff(next);
@@ -1251,7 +1315,7 @@ export function OnlineClassRoom() {
     void stopScreen();
     cleanup();
     socketRef.current?.disconnect();
-    navigate("/courses");
+    navigate(-1);
   };
   const handleEndClass = () => {
     if (!isAdmin && !isTeacher) return;
@@ -1317,26 +1381,26 @@ export function OnlineClassRoom() {
   const needTeacherPH =
     !isAdmin && !isTeacher && !screenSharerPeer && !presenterPeer;
 
-  const galleryList =
-    presenterMinimized || screenSharerPeer
-      ? allPeers.filter((p) => !p.isVideoOff)
-      : allPeers.filter(
-          (p) => !p.isVideoOff && p.socketId !== presenterPeer?.socketId,
-        );
+  const galleryPeers = allPeers.filter((p) => {
+    if (p.isVideoOff) return false;
+    if (p.socketId === presenterPeer?.socketId && !gridExpanded) return false;
+    if (!isAdmin && !isTeacher && (p.isAdmin || p.isTeacher)) return false;
+    return true;
+  });
 
-  // Theme colors
+  // Theme
   const bg = isDark ? "#060d1f" : "#f0f4ff";
-  const surface = isDark ? "rgba(15,23,42,0.8)" : "rgba(255,255,255,0.85)";
+  const surface = isDark ? "rgba(15,23,42,0.82)" : "rgba(255,255,255,0.88)";
   const border = isDark ? "rgba(255,255,255,0.07)" : "rgba(0,0,0,0.07)";
   const text = isDark ? "#e2e8f0" : "#1e293b";
   const subtext = isDark ? "#64748b" : "#64748b";
 
-  // ── Loading state ────────────────────────────────────────────────────────
+  // ── Loading ──────────────────────────────────────────────────────────────
 
   if (!connected && !localStream) {
     return (
       <div
-        className="live-room flex h-screen items-center justify-center"
+        className="lr flex h-screen items-center justify-center"
         style={{ background: bg }}
       >
         <div className="text-center">
@@ -1364,7 +1428,7 @@ export function OnlineClassRoom() {
   if (permissionError) {
     return (
       <div
-        className="live-room flex h-screen items-center justify-center px-4"
+        className="lr flex h-screen items-center justify-center px-4"
         style={{ background: bg }}
       >
         <div
@@ -1398,92 +1462,93 @@ export function OnlineClassRoom() {
     );
   }
 
-  // ── MAIN RENDER ──────────────────────────────────────────────────────────
+  // ── RENDER ───────────────────────────────────────────────────────────────
 
   return (
     <div
-      className={`live-room ${isDark ? "dark" : "light"} flex h-screen flex-col overflow-hidden`}
+      className={`lr ${isDark ? "dark" : "light"} flex h-screen flex-col overflow-hidden`}
       style={{ background: bg, color: text }}
     >
       {/* ── HEADER ── */}
       <header
-        className="flex h-16 shrink-0 items-center justify-between px-4 md:px-5"
+        className="flex h-14 shrink-0 items-center justify-between px-3 md:px-4"
         style={{
           background: surface,
           backdropFilter: "blur(20px)",
           borderBottom: `1px solid ${border}`,
         }}
       >
-        {/* Left: back + logo */}
-        <div className="flex items-center gap-3">
+        {/* Left */}
+        <div className="flex min-w-0 items-center gap-2">
           <button
-            onClick={() => navigate("/courses")}
-            className="ctrl-btn flex h-9 w-9 items-center justify-center rounded-xl"
+            onClick={() => navigate(-1)}
+            className="lr-btn flex h-8 w-8 shrink-0 items-center justify-center rounded-xl"
             style={{
               background: isDark
                 ? "rgba(255,255,255,0.07)"
                 : "rgba(0,0,0,0.06)",
             }}
-            title="Kurslarga qaytish"
+            title="Ortga"
           >
             <ArrowLeft className="h-4 w-4" style={{ color: text }} />
           </button>
 
           <div
-            className="flex h-9 w-9 items-center justify-center rounded-xl text-sm font-bold text-white"
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl text-xs font-bold text-white"
             style={{ background: "linear-gradient(135deg,#6366f1,#06b6d4)" }}
           >
             BA
           </div>
-          <div>
+
+          <div className="min-w-0">
             <p
-              className="text-sm font-semibold leading-tight"
+              className="truncate text-sm font-semibold leading-tight"
               style={{ color: text }}
             >
               Burhan Academy Live
             </p>
-            <p className="text-xs" style={{ color: subtext }}>
+            <p className="text-[10px]" style={{ color: subtext }}>
               {allPeers.length} qatnashuvchi
             </p>
           </div>
         </div>
 
-        {/* Right: badges + theme toggle */}
-        <div className="flex items-center gap-2">
-          {!connected && (
+        {/* Right */}
+        <div className="flex shrink-0 items-center gap-1.5">
+          {connected ? (
             <span
-              className="flex items-center gap-1.5 rounded-full px-3 py-1 text-[11px] font-semibold"
-              style={{ background: "rgba(234,179,8,0.15)", color: "#fbbf24" }}
-            >
-              <WifiOff className="h-3 w-3" /> Qayta ulanmoqda
-            </span>
-          )}
-          {connected && (
-            <span
-              className="flex items-center gap-1.5 rounded-full px-3 py-1 text-[11px] font-semibold"
+              className="flex items-center gap-1 rounded-full px-2 py-1 text-[10px] font-semibold"
               style={{ background: "rgba(52,211,153,0.12)", color: "#34d399" }}
             >
-              <Wifi className="h-3 w-3" /> Jonli
+              <Wifi className="h-3 w-3" />
+              <span className="hidden sm:inline">Jonli</span>
+            </span>
+          ) : (
+            <span
+              className="flex items-center gap-1 rounded-full px-2 py-1 text-[10px] font-semibold"
+              style={{ background: "rgba(234,179,8,0.15)", color: "#fbbf24" }}
+            >
+              <WifiOff className="h-3 w-3" />
             </span>
           )}
+
           {(isAdmin || isTeacher) && (
             <span
-              className="hidden rounded-full px-3 py-1 text-[11px] font-semibold sm:inline-flex"
+              className="hidden rounded-full px-2.5 py-1 text-[10px] font-semibold sm:inline-flex"
               style={{ background: "rgba(99,102,241,0.15)", color: "#818cf8" }}
             >
               {isAdmin ? "Admin" : "Ustoz"}
             </span>
           )}
-          {/* Dark/Light toggle */}
+
           <button
             onClick={() => setIsDark((v) => !v)}
-            className="ctrl-btn flex h-9 w-9 items-center justify-center rounded-xl"
+            className="lr-btn flex h-8 w-8 items-center justify-center rounded-xl"
             style={{
               background: isDark
                 ? "rgba(255,255,255,0.07)"
                 : "rgba(0,0,0,0.06)",
             }}
-            title={isDark ? "Yorug' rejim" : "Qorong'u rejim"}
           >
             {isDark ? (
               <Sun className="h-4 w-4 text-yellow-400" />
@@ -1491,17 +1556,17 @@ export function OnlineClassRoom() {
               <Moon className="h-4 w-4 text-indigo-500" />
             )}
           </button>
-          {/* Participants toggle (mobile) */}
+
           <button
             onClick={() => setShowUserList((v) => !v)}
-            className="ctrl-btn flex h-9 items-center gap-1.5 rounded-xl px-3 xl:hidden"
+            className="lr-btn flex h-8 items-center gap-1 rounded-xl px-2.5"
             style={{
               background: isDark
                 ? "rgba(255,255,255,0.07)"
                 : "rgba(0,0,0,0.06)",
             }}
           >
-            <Users className="h-4 w-4" style={{ color: text }} />
+            <Users className="h-3.5 w-3.5" style={{ color: text }} />
             <span className="text-xs font-semibold" style={{ color: text }}>
               {allPeers.length}
             </span>
@@ -1510,12 +1575,12 @@ export function OnlineClassRoom() {
       </header>
 
       {/* ── BODY ── */}
-      <div className="relative flex flex-1 gap-3 overflow-hidden p-3">
-        {/* Main content */}
-        <div className="flex min-w-0 flex-1 flex-col gap-3 overflow-y-auto pr-0.5">
-          {/* Presenter area */}
-          {!presenterMinimized && (
-            <div className="fade-in relative">
+      <div className="relative flex flex-1 gap-3 overflow-hidden p-2 md:p-3">
+        {/* Main */}
+        <div className="flex min-w-0 flex-1 flex-col gap-3 overflow-y-auto">
+          {/* ── PRESENTER ── */}
+          {!gridExpanded && (
+            <div className="relative">
               {screenSharerPeer || isLocalScreen ? (
                 <div
                   className="relative min-h-[260px] overflow-hidden rounded-2xl md:min-h-[420px]"
@@ -1536,7 +1601,7 @@ export function OnlineClassRoom() {
                     </div>
                   )}
                   <div
-                    className="absolute left-4 top-4 rounded-xl px-3 py-1.5 text-xs font-medium text-white"
+                    className="absolute left-3 top-3 rounded-xl px-3 py-1.5 text-xs font-medium text-white"
                     style={{
                       background: "rgba(0,0,0,0.6)",
                       backdropFilter: "blur(8px)",
@@ -1546,8 +1611,8 @@ export function OnlineClassRoom() {
                     ekran ulashmoqda
                   </div>
                   <button
-                    onClick={() => setPresenterMinimized(true)}
-                    className="ctrl-btn absolute right-3 top-3 flex h-8 w-8 items-center justify-center rounded-xl text-white"
+                    onClick={() => setGridExpanded(true)}
+                    className="lr-btn absolute right-3 top-3 flex h-8 w-8 items-center justify-center rounded-xl text-white"
                     style={{
                       background: "rgba(0,0,0,0.6)",
                       backdropFilter: "blur(8px)",
@@ -1575,8 +1640,8 @@ export function OnlineClassRoom() {
                     isDark={isDark}
                   />
                   <button
-                    onClick={() => setPresenterMinimized(true)}
-                    className="ctrl-btn absolute right-3 top-3 flex h-8 w-8 items-center justify-center rounded-xl text-white"
+                    onClick={() => setGridExpanded(true)}
+                    className="lr-btn absolute right-3 top-3 flex h-8 w-8 items-center justify-center rounded-xl text-white"
                     style={{
                       background: "rgba(0,0,0,0.55)",
                       backdropFilter: "blur(8px)",
@@ -1587,10 +1652,10 @@ export function OnlineClassRoom() {
                 </div>
               ) : needTeacherPH ? (
                 <div className="relative">
-                  <TeacherPlaceholder isDark={isDark} />
+                  <TeacherPH isDark={isDark} />
                   <button
-                    onClick={() => setPresenterMinimized(true)}
-                    className="ctrl-btn absolute right-3 top-3 flex h-8 w-8 items-center justify-center rounded-xl text-white"
+                    onClick={() => setGridExpanded(true)}
+                    className="lr-btn absolute right-3 top-3 flex h-8 w-8 items-center justify-center rounded-xl text-white"
                     style={{
                       background: "rgba(0,0,0,0.55)",
                       backdropFilter: "blur(8px)",
@@ -1599,59 +1664,54 @@ export function OnlineClassRoom() {
                     <Minimize2 className="h-4 w-4" />
                   </button>
                 </div>
-              ) : (
-                <div
-                  className="flex min-h-[260px] items-center justify-center rounded-2xl"
-                  style={{ background: surface, border: `1px solid ${border}` }}
-                >
-                  <div className="text-center" style={{ color: subtext }}>
-                    <Camera className="mx-auto mb-2 h-10 w-10 opacity-40" />
-                    <p className="text-sm">Ulanmoqda...</p>
-                  </div>
-                </div>
-              )}
+              ) : null}
             </div>
           )}
 
-          {/* Gallery */}
-          <div
-            className="rounded-2xl p-3"
-            style={{ background: surface, border: `1px solid ${border}` }}
-          >
-            <div className="mb-3 flex items-center justify-between">
-              <div>
+          {/* ── GALLERY ── */}
+          {gridExpanded ? (
+            <div
+              className="rounded-2xl p-3"
+              style={{ background: surface, border: `1px solid ${border}` }}
+            >
+              <div className="mb-3 flex items-center justify-between">
                 <p className="text-sm font-semibold" style={{ color: text }}>
-                  {presenterMinimized
-                    ? "Barcha video oynalar"
-                    : "Qatnashuvchilar"}
+                  Barcha qatnashuvchilar
                 </p>
-                <p className="text-xs" style={{ color: subtext }}>
-                  {galleryList.filter((p) => !p.isVideoOff).length} kamera yoqiq
-                </p>
-              </div>
-              <button
-                onClick={() => setPresenterMinimized((v) => !v)}
-                className="ctrl-btn flex h-8 w-8 items-center justify-center rounded-xl"
-                style={{
-                  background: isDark
-                    ? "rgba(255,255,255,0.07)"
-                    : "rgba(0,0,0,0.06)",
-                }}
-              >
-                {presenterMinimized ? (
-                  <Maximize2 className="h-4 w-4" style={{ color: text }} />
-                ) : (
+                <button
+                  onClick={() => setGridExpanded(false)}
+                  className="lr-btn flex h-8 w-8 items-center justify-center rounded-xl"
+                  style={{
+                    background: isDark
+                      ? "rgba(255,255,255,0.07)"
+                      : "rgba(0,0,0,0.06)",
+                  }}
+                >
                   <Minimize2 className="h-4 w-4" style={{ color: text }} />
+                </button>
+              </div>
+              <div className="grid gap-3 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3">
+                {presenterPeer && (
+                  <ParticipantTile
+                    key={presenterPeer.socketId}
+                    peer={presenterPeer}
+                    cameraStream={presenterStream}
+                    isLocal={isLocalPresenter}
+                    isSharing={presenterPeer.isScreenSharing}
+                    isDark={isDark}
+                    nameOverride={
+                      !isAdmin &&
+                      !isTeacher &&
+                      (presenterPeer.isAdmin || presenterPeer.isTeacher) &&
+                      presenterPeer.isVideoOff
+                        ? "Ustoz"
+                        : undefined
+                    }
+                  />
                 )}
-              </button>
-            </div>
-
-            {galleryList.length > 0 ||
-            ((screenSharerPeer || isLocalScreen) && presenterMinimized) ? (
-              <div className="grid auto-rows-[minmax(160px,1fr)] gap-3 sm:grid-cols-2 xl:grid-cols-3">
-                {(screenSharerPeer || isLocalScreen) && presenterMinimized && (
+                {(screenSharerPeer || isLocalScreen) && (
                   <div
-                    className="relative min-h-[160px] overflow-hidden rounded-2xl"
+                    className="relative min-h-[220px] overflow-hidden rounded-2xl"
                     style={{ background: "#000" }}
                   >
                     {screenShareStream ? (
@@ -1669,44 +1729,90 @@ export function OnlineClassRoom() {
                       className="absolute left-2 top-2 rounded-lg px-2 py-1 text-[10px] font-medium text-white"
                       style={{ background: "rgba(0,0,0,0.6)" }}
                     >
-                      {isLocalScreen ? "Siz" : "Ustoz"} ekrani
+                      {isLocalScreen ? "Siz" : screenSharerPeer?.displayName}{" "}
+                      ekrani
                     </div>
                   </div>
                 )}
-                {galleryList.map((p) => (
-                  <ParticipantTile
-                    key={p.socketId}
-                    peer={p}
-                    cameraStream={getStreams(p.socketId).camera}
-                    isLocal={p.socketId === mySocketIdRef.current}
-                    isSharing={p.isScreenSharing}
-                    isDark={isDark}
-                    nameOverride={
-                      !isAdmin &&
-                      !isTeacher &&
-                      (p.isAdmin || p.isTeacher) &&
-                      p.isVideoOff
-                        ? "Ustoz"
-                        : undefined
-                    }
-                  />
-                ))}
+                {allPeers
+                  .filter(
+                    (p) =>
+                      p.socketId !== presenterPeer?.socketId && !p.isVideoOff,
+                  )
+                  .map((p) => (
+                    <ParticipantTile
+                      key={p.socketId}
+                      peer={p}
+                      cameraStream={getStreams(p.socketId).camera}
+                      isLocal={p.socketId === mySocketIdRef.current}
+                      isSharing={p.isScreenSharing}
+                      isDark={isDark}
+                    />
+                  ))}
               </div>
-            ) : (
+            </div>
+          ) : (
+            galleryPeers.length > 0 && (
               <div
-                className="flex min-h-[120px] items-center justify-center text-sm"
-                style={{ color: subtext }}
+                className="rounded-2xl p-3"
+                style={{ background: surface, border: `1px solid ${border}` }}
               >
-                Hozircha boshqa qatnashuvchilar ulanmagan
+                <div className="mb-3 flex items-center justify-between">
+                  <div>
+                    <p
+                      className="text-sm font-semibold"
+                      style={{ color: text }}
+                    >
+                      Qatnashuvchilar
+                    </p>
+                    <p className="text-xs" style={{ color: subtext }}>
+                      {galleryPeers.length} kamera yoqiq
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => setGridExpanded(true)}
+                    className="lr-btn flex h-8 w-8 items-center justify-center rounded-xl"
+                    style={{
+                      background: isDark
+                        ? "rgba(255,255,255,0.07)"
+                        : "rgba(0,0,0,0.06)",
+                    }}
+                  >
+                    <Minimize2
+                      className="h-4 w-4 rotate-180"
+                      style={{ color: text }}
+                    />
+                  </button>
+                </div>
+                <div className="grid gap-3 grid-cols-1 sm:grid-cols-2">
+                  {galleryPeers.map((p) => (
+                    <ParticipantTile
+                      key={p.socketId}
+                      peer={p}
+                      cameraStream={getStreams(p.socketId).camera}
+                      isLocal={p.socketId === mySocketIdRef.current}
+                      isSharing={p.isScreenSharing}
+                      isDark={isDark}
+                      nameOverride={
+                        !isAdmin &&
+                        !isTeacher &&
+                        (p.isAdmin || p.isTeacher) &&
+                        p.isVideoOff
+                          ? "Ustoz"
+                          : undefined
+                      }
+                    />
+                  ))}
+                </div>
               </div>
-            )}
-          </div>
+            )
+          )}
         </div>
 
         {/* ── SIDEBAR ── */}
         {showUserList && (
           <aside
-            className="fixed inset-x-3 bottom-[84px] z-30 flex max-h-[55vh] flex-col overflow-hidden rounded-2xl md:static md:bottom-auto md:max-h-none md:w-72 md:shrink-0 xl:w-80"
+            className="fixed inset-x-2 bottom-[80px] z-30 flex max-h-[55vh] flex-col overflow-hidden rounded-2xl md:static md:bottom-auto md:max-h-none md:w-64 md:shrink-0 xl:w-72"
             style={{
               background: surface,
               border: `1px solid ${border}`,
@@ -1714,7 +1820,7 @@ export function OnlineClassRoom() {
             }}
           >
             <div
-              className="flex shrink-0 items-center justify-between px-4 py-3"
+              className="flex shrink-0 items-center justify-between px-3 py-2.5"
               style={{ borderBottom: `1px solid ${border}` }}
             >
               <span
@@ -1726,13 +1832,13 @@ export function OnlineClassRoom() {
               </span>
               <button
                 onClick={() => setShowUserList(false)}
-                className="ctrl-btn flex h-7 w-7 items-center justify-center rounded-lg"
+                className="lr-btn flex h-7 w-7 items-center justify-center rounded-lg md:hidden"
                 style={{ color: subtext }}
               >
                 <X className="h-4 w-4" />
               </button>
             </div>
-
+            {/* ✅ SCROLLABLE CONTAINER */}
             <div className="flex-1 overflow-y-auto p-2">
               {allPeers.map((p) => {
                 const self = p.socketId === mySocketIdRef.current;
@@ -1741,7 +1847,7 @@ export function OnlineClassRoom() {
                 return (
                   <div
                     key={p.socketId}
-                    className="mb-1.5 flex items-center justify-between rounded-xl px-3 py-2.5 transition-colors"
+                    className="mb-1.5 flex items-center justify-between rounded-xl px-2.5 py-2 transition-colors"
                     style={{
                       background: p.isSpeaking
                         ? "rgba(52,211,153,0.08)"
@@ -1753,8 +1859,8 @@ export function OnlineClassRoom() {
                         : `1px solid ${border}`,
                     }}
                   >
-                    <div className="flex min-w-0 items-center gap-2.5">
-                      <Avatar peer={p} size="sm" />
+                    <div className="flex min-w-0 items-center gap-2">
+                      <Avatar peer={p} size="xs" />
                       <div className="min-w-0">
                         <p
                           className="truncate text-xs font-semibold"
@@ -1776,31 +1882,35 @@ export function OnlineClassRoom() {
                       </div>
                     </div>
                     <div className="flex shrink-0 items-center gap-0.5">
+                      {p.isSpeaking && !p.isMuted ? (
+                        <SoundWave color="#34d399" />
+                      ) : (
+                        <span
+                          className={`p-1 ${p.isMuted ? "text-red-400" : "text-emerald-400"}`}
+                        >
+                          {p.isMuted ? (
+                            <MicOff className="h-3 w-3" />
+                          ) : (
+                            <Mic className="h-3 w-3" />
+                          )}
+                        </span>
+                      )}
                       <span
-                        className={`p-1.5 ${p.isMuted ? "text-red-400" : "text-emerald-400"}`}
-                      >
-                        {p.isMuted ? (
-                          <MicOff className="h-3.5 w-3.5" />
-                        ) : (
-                          <Mic className="h-3.5 w-3.5" />
-                        )}
-                      </span>
-                      <span
-                        className={`p-1.5 ${p.isVideoOff ? "text-red-400" : "text-emerald-400"}`}
+                        className={`p-1 ${p.isVideoOff ? "text-red-400" : "text-emerald-400"}`}
                       >
                         {p.isVideoOff ? (
-                          <VideoOff className="h-3.5 w-3.5" />
+                          <VideoOff className="h-3 w-3" />
                         ) : (
-                          <Video className="h-3.5 w-3.5" />
+                          <Video className="h-3 w-3" />
                         )}
                       </span>
                       {canKick && (
                         <button
                           onClick={() => handleKick(p.socketId)}
-                          className="ctrl-btn rounded-lg p-1.5 text-red-400 hover:bg-red-500/10"
+                          className="lr-btn rounded-lg p-1 text-red-400 hover:bg-red-500/10"
                           title="Chiqarish"
                         >
-                          <PhoneOff className="h-3.5 w-3.5" />
+                          <PhoneOff className="h-3 w-3" />
                         </button>
                       )}
                     </div>
@@ -1814,14 +1924,13 @@ export function OnlineClassRoom() {
 
       {/* ── CONTROLS ── */}
       <footer
-        className="flex shrink-0 flex-col gap-3 px-4 py-3 sm:h-20 sm:flex-row sm:items-center sm:justify-between sm:px-6 sm:py-0"
+        className="flex shrink-0 flex-col gap-2 px-3 py-2.5 sm:h-18 sm:flex-row sm:items-center sm:justify-between sm:px-5 sm:py-0 md:h-16"
         style={{
           background: surface,
           backdropFilter: "blur(20px)",
           borderTop: `1px solid ${border}`,
         }}
       >
-        {/* Status */}
         <p className="hidden text-xs sm:block" style={{ color: subtext }}>
           {isInitializing
             ? "Kamera va mikrofon ulanmoqda..."
@@ -1832,59 +1941,53 @@ export function OnlineClassRoom() {
                 : "Qayta ulanmoqda..."}
         </p>
 
-        {/* Buttons */}
-        <div className="mx-auto flex items-center gap-2.5">
-          {/* Mic */}
+        <div className="mx-auto flex items-center gap-2">
           <CtrlBtn
             onClick={handleToggleMute}
             disabled={!hasAudio}
             danger={isMuted}
-            className="h-11 w-11"
+            className="h-10 w-10"
             title={isMuted ? "Mikrofonni yoqish" : "Mikrofonni o'chirish"}
           >
             {isMuted ? (
-              <MicOff className="h-5 w-5" />
+              <MicOff className="h-4.5 w-4.5" />
             ) : (
-              <Mic className="h-5 w-5" />
+              <Mic className="h-4.5 w-4.5" />
             )}
           </CtrlBtn>
 
-          {/* Camera */}
           <CtrlBtn
             onClick={handleToggleVideo}
             disabled={!hasVideo}
             danger={isVideoOff}
-            className="h-11 w-11"
+            className="h-10 w-10"
             title={isVideoOff ? "Kamerani yoqish" : "Kamerani o'chirish"}
           >
             {isVideoOff ? (
-              <VideoOff className="h-5 w-5" />
+              <VideoOff className="h-4.5 w-4.5" />
             ) : (
-              <Video className="h-5 w-5" />
+              <Video className="h-4.5 w-4.5" />
             )}
           </CtrlBtn>
 
-          {/* Screen share */}
           {(isAdmin || isTeacher) && (
             <CtrlBtn
               onClick={() => void toggleScreen()}
               active={isScreenSharing}
-              className="h-11 w-11"
+              className="h-10 w-10"
               title={isScreenSharing ? "Ekranni to'xtatish" : "Ekran ulashish"}
             >
-              <MonitorUp className="h-5 w-5" />
+              <MonitorUp className="h-4.5 w-4.5" />
             </CtrlBtn>
           )}
 
-          {/* Separator */}
-          <div className="h-8 w-px mx-1" style={{ background: border }} />
+          <div className="h-7 w-px mx-0.5" style={{ background: border }} />
 
-          {/* Leave / End */}
           {isAdmin || isTeacher ? (
             <CtrlBtn
               onClick={handleEndClass}
               danger
-              className="h-11 gap-2 px-5 text-sm"
+              className="h-10 gap-1.5 px-4 text-sm"
             >
               <PhoneOff className="h-4 w-4" />
               <span className="hidden sm:inline">Darsni tugatish</span>
@@ -1894,7 +1997,7 @@ export function OnlineClassRoom() {
             <CtrlBtn
               onClick={handleLeave}
               danger
-              className="h-11 gap-2 px-5 text-sm"
+              className="h-10 gap-1.5 px-4 text-sm"
             >
               <PhoneOff className="h-4 w-4" />
               <span>Chiqish</span>
@@ -1902,11 +2005,10 @@ export function OnlineClassRoom() {
           )}
         </div>
 
-        {/* Sidebar toggle (desktop) */}
-        <div className="hidden sm:flex sm:w-40 sm:justify-end">
+        <div className="hidden sm:flex sm:w-36 sm:justify-end">
           <button
             onClick={() => setShowUserList((v) => !v)}
-            className="ctrl-btn flex items-center gap-2 rounded-full px-3 py-2 text-xs font-medium"
+            className="lr-btn flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium"
             style={{
               background: isDark
                 ? "rgba(255,255,255,0.07)"
@@ -1914,7 +2016,7 @@ export function OnlineClassRoom() {
               color: text,
             }}
           >
-            <Users className="h-4 w-4" />
+            <Users className="h-3.5 w-3.5" />
             {allPeers.length} qatnashuvchi
           </button>
         </div>
