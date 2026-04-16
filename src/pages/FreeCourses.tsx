@@ -5,6 +5,27 @@ import { collection, getDocs, query, where } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { Users, Star, PlayCircle, BookOpen } from 'lucide-react';
 import { motion } from 'framer-motion';
+
+function formatCount(count: number): string {
+  if (count >= 1000) {
+    const k = Math.floor(count / 1000);
+    const h = Math.floor((count % 1000) / 100);
+    if (h > 0) return k + '.' + h + 'k';
+    return k + 'k';
+  }
+  return count.toString();
+}
+
+function getStarDisplay(rating: number, count: number): string {
+  if (count === 0) return '0 star';
+  if (rating >= 4.5) return '5 star';
+  if (rating >= 3.5) return '4 star';
+  if (rating >= 2.5) return '3 star';
+  if (rating >= 1.5) return '2 star';
+  if (rating >= 0.5) return '1 star';
+  return '0 star';
+}
+
 interface Course {
   id: string;
   title: string;
@@ -15,6 +36,7 @@ interface Course {
   thumbnailUrl?: string;
   lessonsCount: number;
   rating: number;
+  ratingsCount?: number;
 }
 export function FreeCourses() {
   const { t } = useTranslation();
@@ -48,7 +70,7 @@ export function FreeCourses() {
   const filters = [
   {
     id: 'all',
-    label: 'Barcha darslar'
+    label: t('filter_all')
   },
   {
     id: 'beginner',
@@ -94,11 +116,10 @@ export function FreeCourses() {
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="text-center mb-12">
           <h1 className="text-4xl font-bold mb-4 text-gray-900 dark:text-white">
-            Demo <span className="text-amber-500">darslar</span>
+            {t("demo_courses")}
           </h1>
           <p className="text-gray-600 dark:text-gray-400 max-w-2xl mx-auto">
-            Bepul darslarimiz orqali ta'lim sifatini sinab ko'ring va
-            o'rganishni boshlang.
+            {t("demo_desc")}
           </p>
         </div>
 
@@ -157,8 +178,10 @@ export function FreeCourses() {
                         {t(course.level)}
                       </span>
                       <div className="flex items-center gap-1 text-sm text-gray-500 dark:text-gray-400">
-                        <Star className="w-4 h-4 text-amber-500 fill-current" />
-                        <span>{course.rating || '4.9'}</span>
+                        <Star className={`w-4 h-4 ${(course.rating || 0) > 0 ? "text-amber-500 fill-current" : "text-gray-300"}`} />
+                        <span className="font-bold">
+                          {getStarDisplay(course.rating || 0, course.ratingsCount || 0)} ({formatCount(course.ratingsCount || 0)})
+                        </span>
                       </div>
                     </div>
                     <h3 className="text-xl font-bold mb-2 text-gray-900 dark:text-white group-hover:text-teal-600 dark:group-hover:text-teal-400 transition-colors">
@@ -193,10 +216,10 @@ export function FreeCourses() {
         <div className="text-center py-20 bg-white dark:bg-[#111827] rounded-2xl border border-gray-100 dark:border-gray-800">
             <BookOpen className="w-16 h-16 text-gray-300 dark:text-gray-600 mx-auto mb-4" />
             <h3 className="text-xl font-bold text-gray-900 dark:text-white mb-2">
-              Hali bepul darsliklar yo'q
+              {t("no_free_courses")}
             </h3>
             <p className="text-gray-500 dark:text-gray-400">
-              Tez orada yangi bepul darslar qo'shiladi.
+              {t("coming_soon_free")}
             </p>
           </div>
         }

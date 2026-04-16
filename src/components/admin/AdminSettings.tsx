@@ -4,12 +4,14 @@ import { doc, setDoc } from "firebase/firestore";
 import { db } from "../../lib/firebase";
 import { useAuth } from "../../contexts/AuthContext";
 import { toast } from "sonner";
+import { useTranslation } from "react-i18next";
 interface AdminSettingsProps {
   initialSettings: {
     telegramUsername: string;
   };
 }
 export function AdminSettings({ initialSettings }: AdminSettingsProps) {
+  const { t } = useTranslation();
   const { user, updateAdminCredentials } = useAuth();
   const [settings, setSettings] = useState(initialSettings);
   const [adminCreds, setAdminCreds] = useState({
@@ -34,26 +36,26 @@ export function AdminSettings({ initialSettings }: AdminSettingsProps) {
       await setDoc(doc(db, "settings", "general"), settings, {
         merge: true,
       });
-      toast.success("Saqlandi");
+      toast.success(t("saved"));
     } catch (error) {
-      toast.error("Xatolik yuz berdi");
+      toast.error(t("error_occurred"));
     }
   };
   const handleUpdateAdminCreds = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!adminCreds.currentPassword) {
-      toast.error("Joriy parolni kiritish majburiy");
+      toast.error(t("current_password_required"));
       return;
     }
     if (
       adminCreds.newPassword &&
       adminCreds.newPassword !== adminCreds.confirmPassword
     ) {
-      toast.error("Yangi parollar mos kelmadi");
+      toast.error(t("passwords_dont_match"));
       return;
     }
     if (adminCreds.newPassword && adminCreds.newPassword.length < 6) {
-      toast.error("Yangi parol kamida 6 ta belgidan iborat bo'lishi kerak");
+      toast.error(t("password_min_length"));
       return;
     }
     setIsUpdatingCreds(true);
@@ -79,7 +81,7 @@ export function AdminSettings({ initialSettings }: AdminSettingsProps) {
     <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
       <div className="bg-white dark:bg-[#111827] border border-gray-200 dark:border-gray-800 rounded-2xl p-6">
         <h2 className="text-xl font-bold text-gray-900 dark:text-white mb-6">
-          Umumiy sozlamalar
+          {t("general_settings")}
         </h2>
         <div className="space-y-4">
           <div>
@@ -108,19 +110,19 @@ export function AdminSettings({ initialSettings }: AdminSettingsProps) {
             onClick={saveSettings}
             className="w-full py-3 bg-teal-600 text-white rounded-xl font-medium hover:bg-teal-700 transition-colors"
           >
-            Saqlash
+            {t("save")}
           </button>
         </div>
       </div>
 
       <div className="bg-white dark:bg-[#111827] border border-gray-200 dark:border-gray-800 rounded-2xl p-6">
         <h2 className="text-xl font-bold text-gray-900 dark:text-white mb-6">
-          Admin ma'lumotlarini o'zgartirish
+          {t("admin_credentials")}
         </h2>
         <form onSubmit={handleUpdateAdminCreds} className="space-y-4">
           <div>
             <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-              Yangi Email
+              {t("new_email")}
             </label>
             <div className="relative">
               <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
@@ -141,7 +143,7 @@ export function AdminSettings({ initialSettings }: AdminSettingsProps) {
           </div>
           <div>
             <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-              Yangi Parol (ixtiyoriy)
+              {t("new_password")}
             </label>
             <div className="relative">
               <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
@@ -176,7 +178,7 @@ export function AdminSettings({ initialSettings }: AdminSettingsProps) {
           {adminCreds.newPassword && (
             <div>
               <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                Yangi Parolni Tasdiqlang
+                {t("confirm_new_password")}
               </label>
               <div className="relative">
                 <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
@@ -199,7 +201,7 @@ export function AdminSettings({ initialSettings }: AdminSettingsProps) {
           )}
           <div className="pt-4 border-t border-gray-100 dark:border-gray-800 mt-4">
             <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-              Joriy Parol (tasdiqlash uchun)
+              {t("current_password")}
             </label>
             <div className="relative">
               <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
@@ -228,7 +230,7 @@ export function AdminSettings({ initialSettings }: AdminSettingsProps) {
             {isUpdatingCreds ? (
               <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
             ) : (
-              "Ma'lumotlarni yangilash"
+              t("update_info")
             )}
           </button>
         </form>

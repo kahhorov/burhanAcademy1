@@ -45,7 +45,7 @@ import { toast } from "sonner";
 // ─── Config ───────────────────────────────────────────────────────────────────
 
 const SOCKET_URL =
-  (import.meta as { env: Record<string, string> }).env.VITE_SOCKET_URL ??
+  (import.meta as unknown as { env: Record<string, string> }).env.VITE_SOCKET_URL ??
   "https://burhanacademybackend.onrender.com";
 
 const RTC_CONFIG: RTCConfiguration = {
@@ -419,6 +419,7 @@ function CtrlBtn({
   children,
   title,
   className = "",
+  isDark = true,
 }: {
   onClick: () => void;
   disabled?: boolean;
@@ -427,20 +428,27 @@ function CtrlBtn({
   children: React.ReactNode;
   title?: string;
   className?: string;
+  isDark?: boolean;
 }) {
   return (
     <button
       onClick={onClick}
       disabled={disabled}
       title={title}
-      className={`lr-btn flex items-center justify-center rounded-full font-medium ${className} ${
+      className={`lr-btn flex items-center justify-center rounded-full font-medium transition-all ${className} ${
         disabled
           ? "cursor-not-allowed opacity-35"
           : danger
-            ? "bg-red-500 text-white hover:bg-red-400 shadow-lg shadow-red-500/20"
+            ? isDark
+              ? "bg-gradient-to-br from-rose-500 to-red-600 text-white hover:from-rose-400 hover:to-red-500 shadow-lg shadow-rose-500/25 hover:shadow-rose-500/40"
+              : "bg-gradient-to-br from-gray-600 to-gray-800 text-white hover:from-gray-500 hover:to-gray-700 shadow-lg shadow-gray-900/30"
             : active
-              ? "bg-indigo-500 text-white shadow-lg shadow-indigo-500/25"
-              : "bg-white/10 text-white hover:bg-white/20 backdrop-blur-sm"
+              ? isDark
+                ? "bg-gradient-to-br from-indigo-500 to-violet-600 text-white shadow-lg shadow-indigo-500/30 hover:shadow-indigo-500/50"
+                : "bg-gradient-to-br from-indigo-500 to-violet-600 text-white shadow-lg shadow-indigo-500/30"
+              : isDark
+                ? "bg-white/10 text-white hover:bg-white/20 backdrop-blur-sm hover:shadow-lg hover:shadow-white/10"
+                : "bg-gray-200 text-gray-700 hover:bg-gray-300 shadow-md"
       }`}
     >
       {children}
@@ -564,19 +572,24 @@ export function OnlineClassRoom() {
 
   const startSpeaking = useCallback(
     (stream: MediaStream) => {
-      if (!stream.getAudioTracks().length) return;
+      const audioTracks = stream.getAudioTracks();
+      if (!audioTracks.length) return;
+      
       const Ctx =
         window.AudioContext ||
         (window as unknown as { webkitAudioContext: typeof AudioContext })
           .webkitAudioContext;
       if (!Ctx) return;
+      
       stopSpeaking();
+      
       try {
+        const audioOnlyStream = new MediaStream(audioTracks);
         audioCtxRef.current = new Ctx();
         analyserRef.current = audioCtxRef.current.createAnalyser();
         analyserRef.current.smoothingTimeConstant = 0.8;
         audioSrcRef.current =
-          audioCtxRef.current.createMediaStreamSource(stream);
+          audioCtxRef.current.createMediaStreamSource(audioOnlyStream);
         audioSrcRef.current.connect(analyserRef.current);
         const buf = new Uint8Array(analyserRef.current.frequencyBinCount);
         let prev = false;
@@ -1309,6 +1322,9 @@ export function OnlineClassRoom() {
     localRef.current?.getVideoTracks().forEach((t) => {
       t.enabled = !next;
     });
+    if (localRef.current) {
+      startSpeaking(localRef.current);
+    }
   };
 
   const handleLeave = () => {
@@ -1364,12 +1380,11 @@ export function OnlineClassRoom() {
   const screenSharerPeer = screenSharerId
     ? remotePeers.get(screenSharerId)
     : undefined;
-  const isLocalScreen = screenSharerId === mySocketIdRef.current;
+  const isLocalScreen = isScreenSharing && (screenSharerId === mySocketIdRef.current || screenSharerId === null);
   const screenShareStream = isLocalScreen
     ? screenStream
-    : screenShareStreamId
-      ? (remoteStreams.get(screenSharerId ?? "")?.get(screenShareStreamId) ??
-        null)
+    : screenSharerId && screenSharerId !== mySocketIdRef.current
+      ? (remoteStreams.get(screenSharerId ?? "")?.get(screenShareStreamId ?? "") ?? null)
       : null;
 
   const presenterPeer =
@@ -1543,31 +1558,33 @@ export function OnlineClassRoom() {
 
           <button
             onClick={() => setIsDark((v) => !v)}
-            className="lr-btn flex h-8 w-8 items-center justify-center rounded-xl"
+            className="lr-btn flex h-8 w-8 items-center justify-center rounded-xl transition-all"
             style={{
               background: isDark
-                ? "rgba(255,255,255,0.07)"
-                : "rgba(0,0,0,0.06)",
+                ? "rgba(255,255,255,0.08)"
+                : "rgba(99,102,241,0.1)",
+              color: isDark ? "#fff" : "#6366f1",
             }}
           >
             {isDark ? (
-              <Sun className="h-4 w-4 text-yellow-400" />
+              <Sun className="h-4 w-4" />
             ) : (
-              <Moon className="h-4 w-4 text-indigo-500" />
+              <Moon className="h-4 w-4" />
             )}
           </button>
 
           <button
             onClick={() => setShowUserList((v) => !v)}
-            className="lr-btn flex h-8 items-center gap-1 rounded-xl px-2.5"
+            className="lr-btn flex h-8 items-center gap-1 rounded-xl px-2.5 transition-all"
             style={{
               background: isDark
-                ? "rgba(255,255,255,0.07)"
-                : "rgba(0,0,0,0.06)",
+                ? "rgba(255,255,255,0.08)"
+                : "rgba(99,102,241,0.1)",
+              color: isDark ? "#fff" : "#6366f1",
             }}
           >
-            <Users className="h-3.5 w-3.5" style={{ color: text }} />
-            <span className="text-xs font-semibold" style={{ color: text }}>
+            <Users className="h-3.5 w-3.5" />
+            <span className="text-xs font-semibold">
               {allPeers.length}
             </span>
           </button>
@@ -1581,7 +1598,7 @@ export function OnlineClassRoom() {
           {/* ── PRESENTER ── */}
           {!gridExpanded && (
             <div className="relative">
-              {screenSharerPeer || isLocalScreen ? (
+              {isLocalScreen || screenSharerPeer ? (
                 <div
                   className="relative min-h-[260px] overflow-hidden rounded-2xl md:min-h-[420px]"
                   style={{ background: "#000", border: `1px solid ${border}` }}
@@ -1601,10 +1618,11 @@ export function OnlineClassRoom() {
                     </div>
                   )}
                   <div
-                    className="absolute left-3 top-3 rounded-xl px-3 py-1.5 text-xs font-medium text-white"
+                    className="absolute left-3 top-3 rounded-xl px-3 py-1.5 text-xs font-medium"
                     style={{
-                      background: "rgba(0,0,0,0.6)",
+                      background: isDark ? "rgba(0,0,0,0.6)" : "rgba(255,255,255,0.85)",
                       backdropFilter: "blur(8px)",
+                      color: isDark ? "#fff" : "#1e293b",
                     }}
                   >
                     {isLocalScreen ? "Siz" : screenSharerPeer?.displayName} —
@@ -1612,10 +1630,11 @@ export function OnlineClassRoom() {
                   </div>
                   <button
                     onClick={() => setGridExpanded(true)}
-                    className="lr-btn absolute right-3 top-3 flex h-8 w-8 items-center justify-center rounded-xl text-white"
+                    className="lr-btn absolute right-3 top-3 flex h-8 w-8 items-center justify-center rounded-xl"
                     style={{
-                      background: "rgba(0,0,0,0.6)",
+                      background: isDark ? "rgba(0,0,0,0.6)" : "rgba(255,255,255,0.85)",
                       backdropFilter: "blur(8px)",
+                      color: isDark ? "#fff" : "#1e293b",
                     }}
                   >
                     <Minimize2 className="h-4 w-4" />
@@ -1641,10 +1660,11 @@ export function OnlineClassRoom() {
                   />
                   <button
                     onClick={() => setGridExpanded(true)}
-                    className="lr-btn absolute right-3 top-3 flex h-8 w-8 items-center justify-center rounded-xl text-white"
+                    className="lr-btn absolute right-3 top-3 flex h-8 w-8 items-center justify-center rounded-xl"
                     style={{
-                      background: "rgba(0,0,0,0.55)",
+                      background: isDark ? "rgba(0,0,0,0.55)" : "rgba(255,255,255,0.85)",
                       backdropFilter: "blur(8px)",
+                      color: isDark ? "#fff" : "#1e293b",
                     }}
                   >
                     <Minimize2 className="h-4 w-4" />
@@ -1655,10 +1675,11 @@ export function OnlineClassRoom() {
                   <TeacherPH isDark={isDark} />
                   <button
                     onClick={() => setGridExpanded(true)}
-                    className="lr-btn absolute right-3 top-3 flex h-8 w-8 items-center justify-center rounded-xl text-white"
+                    className="lr-btn absolute right-3 top-3 flex h-8 w-8 items-center justify-center rounded-xl"
                     style={{
-                      background: "rgba(0,0,0,0.55)",
+                      background: isDark ? "rgba(0,0,0,0.55)" : "rgba(255,255,255,0.85)",
                       backdropFilter: "blur(8px)",
+                      color: isDark ? "#fff" : "#1e293b",
                     }}
                   >
                     <Minimize2 className="h-4 w-4" />
@@ -1680,14 +1701,15 @@ export function OnlineClassRoom() {
                 </p>
                 <button
                   onClick={() => setGridExpanded(false)}
-                  className="lr-btn flex h-8 w-8 items-center justify-center rounded-xl"
+                  className="lr-btn flex h-8 w-8 items-center justify-center rounded-xl transition-all"
                   style={{
                     background: isDark
-                      ? "rgba(255,255,255,0.07)"
-                      : "rgba(0,0,0,0.06)",
+                      ? "rgba(255,255,255,0.08)"
+                      : "rgba(99,102,241,0.1)",
+                    color: isDark ? "#fff" : "#6366f1",
                   }}
                 >
-                  <Minimize2 className="h-4 w-4" style={{ color: text }} />
+                  <Minimize2 className="h-4 w-4" />
                 </button>
               </div>
               <div className="grid gap-3 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3">
@@ -1709,7 +1731,7 @@ export function OnlineClassRoom() {
                     }
                   />
                 )}
-                {(screenSharerPeer || isLocalScreen) && (
+                {(isLocalScreen || screenSharerPeer) && (
                   <div
                     className="relative min-h-[220px] overflow-hidden rounded-2xl"
                     style={{ background: "#000" }}
@@ -1726,8 +1748,11 @@ export function OnlineClassRoom() {
                       </div>
                     )}
                     <div
-                      className="absolute left-2 top-2 rounded-lg px-2 py-1 text-[10px] font-medium text-white"
-                      style={{ background: "rgba(0,0,0,0.6)" }}
+                      className="absolute left-2 top-2 rounded-lg px-2 py-1 text-[10px] font-medium"
+                      style={{
+                        background: isDark ? "rgba(0,0,0,0.6)" : "rgba(255,255,255,0.85)",
+                        color: isDark ? "#fff" : "#1e293b",
+                      }}
                     >
                       {isLocalScreen ? "Siz" : screenSharerPeer?.displayName}{" "}
                       ekrani
@@ -1771,16 +1796,16 @@ export function OnlineClassRoom() {
                   </div>
                   <button
                     onClick={() => setGridExpanded(true)}
-                    className="lr-btn flex h-8 w-8 items-center justify-center rounded-xl"
+                    className="lr-btn flex h-8 w-8 items-center justify-center rounded-xl transition-all"
                     style={{
                       background: isDark
-                        ? "rgba(255,255,255,0.07)"
-                        : "rgba(0,0,0,0.06)",
+                        ? "rgba(255,255,255,0.08)"
+                        : "rgba(99,102,241,0.1)",
+                      color: isDark ? "#fff" : "#6366f1",
                     }}
                   >
                     <Minimize2
                       className="h-4 w-4 rotate-180"
-                      style={{ color: text }}
                     />
                   </button>
                 </div>
@@ -1948,6 +1973,7 @@ export function OnlineClassRoom() {
             danger={isMuted}
             className="h-10 w-10"
             title={isMuted ? "Mikrofonni yoqish" : "Mikrofonni o'chirish"}
+            isDark={isDark}
           >
             {isMuted ? (
               <MicOff className="h-4.5 w-4.5" />
@@ -1962,6 +1988,7 @@ export function OnlineClassRoom() {
             danger={isVideoOff}
             className="h-10 w-10"
             title={isVideoOff ? "Kamerani yoqish" : "Kamerani o'chirish"}
+            isDark={isDark}
           >
             {isVideoOff ? (
               <VideoOff className="h-4.5 w-4.5" />
@@ -1976,6 +2003,7 @@ export function OnlineClassRoom() {
               active={isScreenSharing}
               className="h-10 w-10"
               title={isScreenSharing ? "Ekranni to'xtatish" : "Ekran ulashish"}
+              isDark={isDark}
             >
               <MonitorUp className="h-4.5 w-4.5" />
             </CtrlBtn>
@@ -1988,6 +2016,7 @@ export function OnlineClassRoom() {
               onClick={handleEndClass}
               danger
               className="h-10 gap-1.5 px-4 text-sm"
+              isDark={isDark}
             >
               <PhoneOff className="h-4 w-4" />
               <span className="hidden sm:inline">Darsni tugatish</span>
@@ -1998,6 +2027,7 @@ export function OnlineClassRoom() {
               onClick={handleLeave}
               danger
               className="h-10 gap-1.5 px-4 text-sm"
+              isDark={isDark}
             >
               <PhoneOff className="h-4 w-4" />
               <span>Chiqish</span>
@@ -2008,12 +2038,12 @@ export function OnlineClassRoom() {
         <div className="hidden sm:flex sm:w-36 sm:justify-end">
           <button
             onClick={() => setShowUserList((v) => !v)}
-            className="lr-btn flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium"
+            className="lr-btn flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium transition-all"
             style={{
               background: isDark
-                ? "rgba(255,255,255,0.07)"
-                : "rgba(0,0,0,0.06)",
-              color: text,
+                ? "rgba(255,255,255,0.08)"
+                : "rgba(99,102,241,0.1)",
+              color: isDark ? "#fff" : "#6366f1",
             }}
           >
             <Users className="h-3.5 w-3.5" />

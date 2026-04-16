@@ -40,23 +40,23 @@ export function Home() {
   const benefits = [
     {
       icon: <BookOpen className="w-6 h-6 text-teal-600 dark:text-teal-400" />,
-      title: "Interaktiv darslar",
-      desc: "Audio, video va mashqlar orqali arab tilini oson o'rganing",
+      title: t("interactiv_lessons"),
+      desc: t("benefit_desc1"),
     },
     {
       icon: <Users className="w-6 h-6 text-teal-600 dark:text-teal-400" />,
-      title: "Native speakerlar",
-      desc: "Arab tilida so'zlashuvchi o'qituvchilardan real talaffuzni o'rganing",
+      title: t("native_speakers"),
+      desc: t("benefit_desc2"),
     },
     {
       icon: <Award className="w-6 h-6 text-teal-600 dark:text-teal-400" />,
-      title: "Sertifikatlar",
-      desc: "Har bir darajani tugatganingizda rasmiy sertifikat oling",
+      title: t("certificates"),
+      desc: t("benefit_desc3"),
     },
     {
       icon: <Clock className="w-6 h-6 text-teal-600 dark:text-teal-400" />,
-      title: "O'z tezligingizda",
-      desc: "Istalgan vaqt va joyda, o'zingizga qulay tezlikda o'qing",
+      title: t("own_pace"),
+      desc: t("benefit_desc4"),
     },
   ];
 
@@ -67,8 +67,8 @@ export function Home() {
       badgeColor:
         "bg-teal-100 text-teal-700 dark:bg-teal-900/30 dark:text-teal-300",
       bg: "bg-teal-50 dark:bg-[#111827] border-teal-100 dark:border-teal-900/50",
-      title: "Arab alifbosi",
-      desc: "Arab harflarini yozish va o'qishni noldan o'rganing. Asosiy talaffuz qoidalari.",
+      title: t("arab_alphabet"),
+      desc: t("alphabet_desc"),
       weeks: 4,
       students: "3400+",
       rating: 5,
@@ -80,8 +80,8 @@ export function Home() {
       badgeColor:
         "bg-gray-200 text-gray-700 dark:bg-gray-700 dark:text-gray-300",
       bg: "bg-gray-100 dark:bg-[#111827] border-gray-200 dark:border-gray-700",
-      title: "Grammatika asoslari",
-      desc: "Gap tuzish, fe'l zamonlari va kundalik muloqot uchun zarur grammatika.",
+      title: t("grammar_basics"),
+      desc: t("grammar_desc"),
       weeks: 8,
       students: "3400+",
       rating: 5,
@@ -93,8 +93,8 @@ export function Home() {
       badgeColor:
         "bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400",
       bg: "bg-gray-50 dark:bg-[#111827] border-gray-100 dark:border-gray-800",
-      title: "Ravon gapirish",
-      desc: "Murakkab mavzularda suhbat qurish, adabiy arab tili va dialektlar.",
+      title: t("fluent_speaking"),
+      desc: t("speaking_desc"),
       weeks: 12,
       students: "3400+",
       rating: 5,
@@ -115,7 +115,7 @@ export function Home() {
         <div className="relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
           <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full border border-white/20 bg-white/5 backdrop-blur-sm text-sm mb-8">
             <Star className="w-4 h-4 text-amber-400" />
-            <span>3400+ o'quvchilar bilan qo'shiling</span>
+            <span>{t("welcome_message")}</span>
           </div>
           <h1 className="text-5xl md:text-7xl font-bold mb-6 tracking-tight">
             {t("hero_title")}{" "}
@@ -257,7 +257,7 @@ export function Home() {
                     </div>
                     <div className="flex items-center gap-1">
                       <Users className="w-4 h-4" />
-                      <span>{level.students} o'quvchi</span>
+                      <span>{level.students} {t("students_count")}</span>
                     </div>
                   </div>
                   <div className="flex items-center justify-between mt-auto pt-4 border-t border-black/5 dark:border-white/5">

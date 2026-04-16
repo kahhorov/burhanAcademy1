@@ -59,47 +59,47 @@ export function PricingPage() {
   }, []);
   const features = [
     {
-      name: "Barcha dars videolari",
+      name: t("features_all_courses"),
       free: true,
       paid: true,
     },
     {
-      name: "Asosiy o'quv materiallari",
+      name: t("features_basic"),
       free: true,
       paid: true,
     },
     {
-      name: "Darslarni baholash",
+      name: t("features_rate"),
       free: true,
       paid: true,
     },
     {
-      name: "Barcha pullik kurslarga kirish",
+      name: t("features_paid_courses"),
       free: false,
       paid: true,
     },
     {
-      name: "Premium qo'shimcha materiallar",
+      name: t("features_premium"),
       free: false,
       paid: true,
     },
     {
-      name: "O'qituvchi bilan shaxsiy aloqa",
+      name: t("features_contact"),
       free: false,
       paid: true,
     },
     {
-      name: "Uy vazifalarini tekshirish",
+      name: t("features_homework"),
       free: false,
       paid: true,
     },
     {
-      name: "Kurs yakunida rasmiy sertifikat",
+      name: t("features_certificate"),
       free: false,
       paid: true,
     },
     {
-      name: "Online darslarga cheksiz kirish",
+      name: t("features_online_access"),
       free: false,
       paid: true,
     },
@@ -107,23 +107,23 @@ export function PricingPage() {
 
   const onlineClassFeatures = [
     {
-      name: "Jonli efirda qatnashish",
+      name: t("features_live_participate"),
       included: true,
     },
     {
-      name: "O'qituvchiga savol berish",
+      name: t("features_ask"),
       included: true,
     },
     {
-      name: "Amaliy mashg'ulotlarda ishtirok",
+      name: t("features_practice"),
       included: true,
     },
     {
-      name: "Boshqa o'quvchilar bilan muloqot",
+      name: t("features_chat"),
       included: true,
     },
     {
-      name: "Video darsliklar",
+      name: t("features_video"),
       included: false,
     },
   ];
@@ -157,17 +157,17 @@ export function PricingPage() {
               </div>
               <div>
                 <h3 className="text-lg font-bold text-green-800 dark:text-green-300">
-                  Siz premium foydalanuvchisiz!
+                  {t("you_premium")}
                 </h3>
                 <p className="text-green-700 dark:text-green-400/80 text-sm">
-                  Barcha kurslar va imkoniyatlar siz uchun ochiq.
+                  {t("features_paid_courses")}
                 </p>
               </div>
             </div>
             {premiumExpiresAt && (
               <div className="bg-white/50 dark:bg-black/20 px-4 py-2 rounded-xl text-center">
                 <p className="text-xs text-green-600 dark:text-green-400 font-medium uppercase tracking-wider">
-                  Amal qilish muddati
+                  {t("expiry_date")}
                 </p>
                 <p className="font-bold text-green-800 dark:text-green-300">
                   {formatDate(premiumExpiresAt)}
@@ -183,15 +183,15 @@ export function PricingPage() {
               onClick={() => setBillingCycle("monthly")}
               className={`relative z-10 px-6 py-2 rounded-full text-sm font-medium transition-colors ${billingCycle === "monthly" ? "text-gray-900 dark:text-white" : "text-gray-500 hover:text-gray-700 dark:hover:text-gray-300"}`}
             >
-              Oylik
+              {t("monthly")}
             </button>
             <button
               onClick={() => setBillingCycle("yearly")}
               className={`relative z-10 px-6 py-2 rounded-full text-sm font-medium transition-colors ${billingCycle === "yearly" ? "text-gray-900 dark:text-white" : "text-gray-500 hover:text-gray-700 dark:hover:text-gray-300"}`}
             >
-              Yillik{" "}
+              {t("yearly")}{" "}
               <span className="text-xs text-green-500 ml-1 font-bold">
-                -20%
+                {t("discount")}
               </span>
             </button>
             <div
@@ -220,7 +220,7 @@ export function PricingPage() {
                 </span>
               </div>
               <p className="text-gray-600 dark:text-gray-400 mb-8">
-                Arab tilini o'rganishni boshlash uchun ajoyib imkoniyat.
+                {t("try_it")}
               </p>
               <ul className="space-y-4 mb-8 flex-grow">
                 {features.map((feature, idx) => (
@@ -260,7 +260,7 @@ export function PricingPage() {
               className={`absolute top-4 right-4 ${isPremium ? "bg-green-500" : "bg-amber-500"} text-white text-xs font-bold px-3 py-1 rounded-full flex items-center gap-1`}
             >
               <Star className="w-3 h-3 fill-current" />{" "}
-              {isPremium ? "Faol" : "Eng mashhur"}
+              {isPremium ? t("premium_active") : t("most_popular")}
             </div>
             <div className="relative z-10">
               <h3 className="text-2xl font-bold text-gray-900 dark:text-white mb-2">
@@ -281,7 +281,7 @@ export function PricingPage() {
                 </span>
               </div>
               <p className="text-gray-600 dark:text-gray-400 mb-8">
-                Mukammal natijaga erishish uchun to'liq imkoniyatlar.
+                {t("start_learning")}
               </p>
               <ul className="space-y-4 mb-8 flex-grow">
                 {features.map((feature, idx) => (
@@ -305,7 +305,7 @@ export function PricingPage() {
             <div className="mt-auto pt-8">
               {isPremium ? (
                 <div className="w-full flex items-center justify-center gap-2 px-6 py-4 bg-green-50 dark:bg-green-900/20 text-green-600 dark:text-green-400 rounded-xl font-medium">
-                  <CheckCircle className="w-5 h-5" /> Sotib olingansiz
+                  <CheckCircle className="w-5 h-5" /> {t("purchased")}
                 </div>
               ) : (
                 <a
@@ -328,7 +328,7 @@ export function PricingPage() {
                 <div className="flex items-center gap-2 mb-2">
                   <Radio className="w-6 h-6 text-blue-500" />
                   <h3 className="text-2xl font-bold text-gray-900 dark:text-white">
-                    Online Dars
+                    {t("online_class")}
                   </h3>
                 </div>
                 <div className="flex items-baseline gap-2 mb-6">
@@ -338,10 +338,10 @@ export function PricingPage() {
                       : onlineClassSettings.price.toLocaleString()}{" "}
                     so'm
                   </span>
-                  <span className="text-gray-500 text-sm">/ oy</span>
+                  <span className="text-gray-500 text-sm">/ {t("monthly")}</span>
                 </div>
                 <p className="text-gray-600 dark:text-gray-400 mb-8">
-                  Ustoz bilan jonli muloqot va amaliyot.
+                  {t("start_learning")}
                 </p>
                 <ul className="space-y-4 mb-8 flex-grow">
                   {onlineClassFeatures.map((feature, idx) => (
@@ -367,7 +367,7 @@ export function PricingPage() {
                   rel="noopener noreferrer"
                   className="w-full flex items-center justify-center gap-2 px-6 py-4 bg-blue-50 hover:bg-blue-100 dark:bg-blue-900/20 dark:hover:bg-blue-900/40 text-blue-600 dark:text-blue-400 rounded-xl font-medium transition-colors"
                 >
-                  <MessageCircle className="w-5 h-5" /> Bog'lanish
+                  <MessageCircle className="w-5 h-5" /> {t("contact_via_telegram")}
                 </a>
               </div>
             </div>

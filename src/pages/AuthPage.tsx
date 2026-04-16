@@ -102,8 +102,7 @@ export function AuthPage() {
           </h2>
           {isLogin && (
             <p className="mt-2 text-sm text-gray-500 dark:text-gray-400">
-              Agar hali ro'yxatdan o'tmagan bo'lsangiz, avval pastdagi tugmani
-              bosing
+              {t("no_account")}
             </p>
           )}
         </div>

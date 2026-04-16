@@ -13,7 +13,10 @@ import {
   addDoc,
   updateDoc,
   doc,
-  deleteDoc } from
+  deleteDoc,
+  query,
+  where,
+  getDocs } from
 'firebase/firestore';
 import { db } from '../../lib/firebase';
 import { toast } from 'sonner';
@@ -88,6 +91,16 @@ export function AdminCourses({ courses, fetchData }: AdminCoursesProps) {
   const handleDelete = async () => {
     if (!deleteConfirm) return;
     try {
+      const modulesQuery = query(collection(db, 'modules'), where('courseId', '==', deleteConfirm.id));
+      const modulesSnapshot = await getDocs(modulesQuery);
+      for (const moduleDoc of modulesSnapshot.docs) {
+        const lessonsQuery = query(collection(db, 'lessons'), where('moduleId', '==', moduleDoc.id));
+        const lessonsSnapshot = await getDocs(lessonsQuery);
+        for (const lessonDoc of lessonsSnapshot.docs) {
+          await deleteDoc(doc(db, 'lessons', lessonDoc.id));
+        }
+        await deleteDoc(doc(db, 'modules', moduleDoc.id));
+      }
       await deleteDoc(doc(db, 'courses', deleteConfirm.id));
       toast.success("O'chirildi");
       setDeleteConfirm(null);

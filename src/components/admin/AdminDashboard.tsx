@@ -15,6 +15,7 @@ import {
   Tooltip,
   ResponsiveContainer,
 } from "recharts";
+import { useTranslation } from "react-i18next";
 
 interface AdminDashboardProps {
   users: any[];
@@ -25,13 +26,29 @@ interface AdminDashboardProps {
 
 export function AdminDashboard({
   users,
-  courses,
   lessons,
-  premiumPrice,
 }: AdminDashboardProps) {
+  const { t } = useTranslation();
+  
+  const isPremiumActive = (user: any) => {
+    if (!user.isPremium) return false;
+    if (!user.premiumExpiresAt) return true;
+    
+    const expiresAt = user.premiumExpiresAt.toDate 
+      ? user.premiumExpiresAt.toDate() 
+      : new Date(user.premiumExpiresAt);
+    
+    return new Date() < expiresAt;
+  };
+  
   const totalUsersCount = users.length;
-  const premiumUsersCount = users.filter((u) => u.isPremium).length;
-  const estimatedRevenue = premiumUsersCount * premiumPrice;
+  const premiumUsersCount = users.filter((u) => isPremiumActive(u)).length;
+  const estimatedRevenue = users.reduce((sum, u) => {
+    if (isPremiumActive(u) && u.premiumPurchasePrice) {
+      return sum + u.premiumPurchasePrice;
+    }
+    return sum;
+  }, 0);
 
   const chartData = useMemo(() => {
     const months = Array.from({ length: 5 }, (_, i) => {
@@ -40,7 +57,6 @@ export function AdminDashboard({
       return {
         month: d.getMonth(),
         year: d.getFullYear(),
-        // Oylarni M01, M02 kabi formatlash kerak bo'lsa: `M${String(d.getMonth() + 1).padStart(2, '0')}` ishlating
         name: d.toLocaleString("uz-UZ", { month: "short" }),
         users: 0,
         total: 0,
@@ -58,23 +74,22 @@ export function AdminDashboard({
 
         if (monthObj) {
           monthObj.users += 1;
-          if (u.isPremium) {
-            monthObj.total += premiumPrice;
+          if (isPremiumActive(u) && u.premiumPurchasePrice) {
+            monthObj.total += u.premiumPurchasePrice;
           }
         }
       }
     });
     return months;
-  }, [users, premiumPrice]);
+  }, [users]);
 
   return (
     <div className="space-y-6">
       <h2 className="text-2xl font-bold text-gray-900 dark:text-white mb-6">
-        Umumiy ko'rsatkichlar
+        {t("total_users")}
       </h2>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-        {/* Jami foydalanuvchilar */}
         <div className="bg-white dark:bg-[#111827] p-6 rounded-2xl border border-gray-100 dark:border-gray-800 shadow-sm">
           <div className="flex items-center gap-4 mb-4">
             <div className="w-12 h-12 bg-blue-50 dark:bg-blue-900/20 rounded-xl flex items-center justify-center text-blue-600 dark:text-blue-400">
@@ -82,7 +97,7 @@ export function AdminDashboard({
             </div>
             <div>
               <p className="text-sm font-medium text-gray-500 dark:text-gray-400">
-                Jami foydalanuvchilar
+                {t("total_users")}
               </p>
               <h3 className="text-2xl font-bold text-gray-900 dark:text-white">
                 {totalUsersCount}
@@ -91,7 +106,6 @@ export function AdminDashboard({
           </div>
         </div>
 
-        {/* Premium obunachilar */}
         <div className="bg-white dark:bg-[#111827] p-6 rounded-2xl border border-gray-100 dark:border-gray-800 shadow-sm">
           <div className="flex items-center gap-4 mb-4">
             <div className="w-12 h-12 bg-amber-50 dark:bg-amber-900/20 rounded-xl flex items-center justify-center text-amber-600 dark:text-amber-400">
@@ -99,7 +113,7 @@ export function AdminDashboard({
             </div>
             <div>
               <p className="text-sm font-medium text-gray-500 dark:text-gray-400">
-                Premium obunachilar
+                {t("premium_users")}
               </p>
               <h3 className="text-2xl font-bold text-gray-900 dark:text-white">
                 {premiumUsersCount}
@@ -108,7 +122,6 @@ export function AdminDashboard({
           </div>
         </div>
 
-        {/* Taxminiy tushum */}
         <div className="bg-white dark:bg-[#111827] p-6 rounded-2xl border border-gray-100 dark:border-gray-800 shadow-sm">
           <div className="flex items-center gap-4 mb-4">
             <div className="w-12 h-12 bg-green-50 dark:bg-green-900/20 rounded-xl flex items-center justify-center text-green-600 dark:text-green-400">
@@ -116,7 +129,7 @@ export function AdminDashboard({
             </div>
             <div>
               <p className="text-sm font-medium text-gray-500 dark:text-gray-400">
-                Taxminiy tushum
+                {t("estimated_revenue")}
               </p>
               <h3 className="text-2xl font-bold text-gray-900 dark:text-white">
                 {estimatedRevenue.toLocaleString()} so'm
@@ -125,7 +138,6 @@ export function AdminDashboard({
           </div>
         </div>
 
-        {/* Dars videolar */}
         <div className="bg-white dark:bg-[#111827] p-6 rounded-2xl border border-gray-100 dark:border-gray-800 shadow-sm">
           <div className="flex items-center gap-4 mb-4">
             <div className="w-12 h-12 bg-purple-50 dark:bg-purple-900/20 rounded-xl flex items-center justify-center text-purple-600 dark:text-purple-400">
@@ -133,7 +145,7 @@ export function AdminDashboard({
             </div>
             <div>
               <p className="text-sm font-medium text-gray-500 dark:text-gray-400">
-                Dars videolar
+                {t("video_lessons_count")}
               </p>
               <h3 className="text-2xl font-bold text-gray-900 dark:text-white">
                 {lessons?.length || 0}
@@ -144,10 +156,9 @@ export function AdminDashboard({
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-8">
-        {/* 1-CHART: Oxirgi 5 oylik tushumlar */}
         <div className="bg-white dark:bg-[#111827] p-6 rounded-2xl border border-gray-100 dark:border-gray-800 shadow-sm">
           <h3 className="text-lg font-bold text-gray-900 dark:text-white mb-6">
-            Oxirgi 5 oylik tushumlar
+            {t("last_5_months_revenue")}
           </h3>
           <div className="h-72 w-full">
             <ResponsiveContainer width="100%" height="100%">
@@ -194,7 +205,7 @@ export function AdminDashboard({
                   }}
                   formatter={(value: number) => [
                     `${value.toLocaleString()} so'm`,
-                    "Tushum",
+                    t("revenue"),
                   ]}
                 />
                 <Area
@@ -210,11 +221,10 @@ export function AdminDashboard({
           </div>
         </div>
 
-        {/* 2-CHART: Foydalanuvchilar o'sishi (Rasmdagidek yangilangan) */}
         <div className="bg-white dark:bg-[#111827] p-6 rounded-2xl border border-gray-100 dark:border-gray-800 shadow-sm">
           <h3 className="text-lg font-bold text-gray-900 dark:text-white mb-6 flex items-center gap-2">
             <TrendingUp className="w-5 h-5 text-teal-600" />
-            Oxirgi 5 oylik foydalanuvchilar
+            {t("last_5_months_users")}
           </h3>
           <div className="h-72 w-full">
             <ResponsiveContainer width="100%" height="100%">
@@ -265,8 +275,8 @@ export function AdminDashboard({
                     color: "#fff",
                   }}
                   formatter={(value: number) => [
-                    `${value} ta`,
-                    "Yangi foydalanuvchilar",
+                    `${value}`,
+                    t("new_users"),
                   ]}
                 />
 

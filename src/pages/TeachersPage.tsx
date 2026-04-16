@@ -122,7 +122,7 @@ export function TeachersPage() {
               {t('no_teachers')}
             </h3>
             <p className="text-gray-500 dark:text-gray-400">
-              Tez orada o'qituvchilar ro'yxati qo'shiladi.
+              {t('coming_soon_free')}
             </p>
           </div>
         }

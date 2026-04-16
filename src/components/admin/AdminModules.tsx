@@ -245,16 +245,19 @@ export function AdminModules({
                   <input
                   type="text"
                   required
+                  maxLength={15}
                   value={formData.title}
                   onChange={(e) =>
                   setFormData({
                     ...formData,
-                    title: e.target.value
+                    title: e.target.value.slice(0, 15)
                   })
                   }
-                  placeholder="Masalan: TypeScript asoslari"
-                  className="w-full p-3 border border-gray-200 dark:border-gray-700 rounded-xl bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-white outline-none focus:ring-2 focus:ring-teal-600" />
-
+                  placeholder="Masalan: TypeScript"
+                  className={`w-full p-3 border rounded-xl bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-white outline-none focus:ring-2 focus:ring-teal-600 ${formData.title.length >= 15 ? 'border-red-500 ring-2 ring-red-500/20' : 'border-gray-200 dark:border-gray-700'}`} />
+                  <p className={`text-xs mt-1 ${formData.title.length >= 15 ? 'text-red-500 font-medium' : 'text-gray-400'}`}>
+                    Modul nomi 15 ta belgidan ko'p bo'lmasin ({formData.title.length}/15)
+                  </p>
                 </div>
                 <div>
                   <label className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-2">

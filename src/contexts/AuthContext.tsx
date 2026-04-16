@@ -1,4 +1,4 @@
-import React, { useEffect, useState, createContext, useContext } from "react";
+import React, { useEffect, useState, createContext, useContext, useCallback } from "react";
 import {
   User,
   signInWithPopup,
@@ -22,6 +22,7 @@ import {
 } from "firebase/firestore";
 import { auth, googleProvider, db } from "../lib/firebase";
 import { toast } from "sonner";
+import { setLocalCache, getLocalCache } from "../lib/utils";
 interface AuthContextType {
   user: User | null;
   loading: boolean;
@@ -35,18 +36,10 @@ interface AuthContextType {
   userProgress: Record<string, any>;
   login: () => Promise<void>;
   loginWithEmail: (email: string, pass: string) => Promise<void>;
-  registerWithEmail: (
-    email: string,
-    pass: string,
-    name: string,
-  ) => Promise<void>;
+  registerWithEmail: (email: string, pass: string, name: string) => Promise<void>;
   logout: () => Promise<void>;
   refreshUserData: () => Promise<void>;
-  updateAdminCredentials: (
-    currentPassword: string,
-    newEmail?: string,
-    newPassword?: string,
-  ) => Promise<void>;
+  updateAdminCredentials: (currentPassword: string, newEmail?: string, newPassword?: string) => Promise<void>;
 }
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 export function AuthProvider({ children }: { children: React.ReactNode }) {
@@ -60,18 +53,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [purchasedCourses, setPurchasedCourses] = useState<string[]>([]);
   const [hasOnlineClassAccess, setHasOnlineClassAccess] = useState(false);
   const [userProgress, setUserProgress] = useState<Record<string, any>>({});
+  const [initialCheckDone, setInitialCheckDone] = useState(false);
+
   const checkPremiumExpiration = async (userId: string, expiresAt: any) => {
     if (!expiresAt) return false;
     const now = new Date();
-    const expirationDate = expiresAt.toDate
-      ? expiresAt.toDate()
-      : new Date(expiresAt);
+    const expirationDate = expiresAt.toDate ? expiresAt.toDate() : new Date(expiresAt);
     if (now > expirationDate) {
       try {
-        await updateDoc(doc(db, "users", userId), {
-          isPremium: false,
-          premiumExpiresAt: null,
-        });
+        await updateDoc(doc(db, "users", userId), { isPremium: false, premiumExpiresAt: null });
         toast.info("Premium ta'rifingiz muddati tugadi.");
         return true;
       } catch (e) {
@@ -80,177 +70,200 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
     return false;
   };
-  const fetchUserData = async (currentUser: User) => {
+
+  const fetchUserData = useCallback(async (currentUser: User) => {
+    if (!currentUser) return;
+    
+    const cacheKey = `user_${currentUser.uid}`;
+    const cachedUser = getLocalCache<any>(cacheKey);
+    
+    if (currentUser.email === "maqsadjon@gmail.com") {
+      setIsAdmin(true);
+    }
+    
     try {
       const userDocRef = doc(db, "users", currentUser.uid);
       const userDoc = await getDoc(userDocRef);
-      const isUserAdmin =
-        currentUser.email === "maqsadjon@gmail.com" ||
-        (userDoc.exists() && userDoc.data().isAdmin === true);
-      const isUserTeacher =
-        userDoc.exists() && userDoc.data().isTeacher === true;
-      setIsAdmin(isUserAdmin);
-      setIsTeacher(isUserTeacher);
+      
       if (userDoc.exists()) {
         const data = userDoc.data();
+        const isUserAdmin = currentUser.email === "maqsadjon@gmail.com" || data.isAdmin === true;
+        const isUserTeacher = data.isTeacher === true;
+        
+        setIsAdmin(isUserAdmin);
+        setIsTeacher(isUserTeacher);
+        
         if (data.isBlocked) {
           await signOut(auth);
           toast.error("Sizning hisobingiz bloklangan. Tizimga kira olmaysiz.", {
-            style: {
-              background: "#fee2e2",
-              color: "#991b1b",
-              border: "1px solid #f87171",
-            },
+            style: { background: "#fee2e2", color: "#991b1b", border: "1px solid #f87171" },
           });
           setUser(null);
           setIsBlocked(true);
           return;
         }
+        
         setIsBlocked(false);
         let currentPremiumStatus = data.isPremium || false;
         if (currentPremiumStatus && data.premiumExpiresAt) {
-          const isExpired = await checkPremiumExpiration(
-            currentUser.uid,
-            data.premiumExpiresAt,
-          );
+          const isExpired = await checkPremiumExpiration(currentUser.uid, data.premiumExpiresAt);
           if (isExpired) currentPremiumStatus = false;
         }
         setIsPremium(currentPremiumStatus);
         setPremiumExpiresAt(data.premiumExpiresAt || null);
         setPurchasedCourses(data.purchasedCourses || []);
         setHasOnlineClassAccess(data.hasOnlineClassAccess || false);
+        
+        setLocalCache(cacheKey, data, 5 * 60 * 1000);
+        
         if (currentUser.email === "maqsadjon@gmail.com" && !data.isAdmin) {
-          try {
-            await updateDoc(userDocRef, {
-              isAdmin: true,
-            });
-          } catch (e) {
-            console.warn("Could not update admin flag:", e);
-          }
+          updateDoc(userDocRef, { isAdmin: true }).catch((e) => console.warn("Admin update failed:", e));
         }
       } else {
-        try {
-          await setDoc(userDocRef, {
-            email: currentUser.email,
-            displayName: currentUser.displayName || "",
-            photoURL: currentUser.photoURL || "",
-            isPremium: false,
-            purchasedCourses: [],
-            hasOnlineClassAccess: false,
-            isAdmin: isUserAdmin,
-            isTeacher: false,
-            isBlocked: false,
-            createdAt: serverTimestamp(),
-          });
-        } catch (e) {
-          console.warn("Could not create user doc:", e);
-        }
+        setDoc(userDocRef, {
+          email: currentUser.email,
+          displayName: currentUser.displayName || "",
+          photoURL: currentUser.photoURL || "",
+          isPremium: false,
+          purchasedCourses: [],
+          hasOnlineClassAccess: false,
+          isAdmin: currentUser.email === "maqsadjon@gmail.com",
+          isTeacher: false,
+          isBlocked: false,
+          createdAt: serverTimestamp(),
+        }).catch((e) => console.warn("User doc creation failed:", e));
         setIsPremium(false);
         setPurchasedCourses([]);
         setHasOnlineClassAccess(false);
         setIsBlocked(false);
       }
-    } catch (error: any) {
+    } catch (error) {
       console.warn("Error fetching user data:", error);
-      if (currentUser.email === "maqsadjon@gmail.com") setIsAdmin(true);
-      setIsPremium(false);
-      setPurchasedCourses([]);
-      setHasOnlineClassAccess(false);
+      
+      if (cachedUser && !cachedUser.isBlocked) {
+        setIsAdmin(currentUser.email === "maqsadjon@gmail.com" || cachedUser.isAdmin);
+        setIsTeacher(cachedUser.isTeacher);
+        setIsPremium(cachedUser.isPremium || false);
+        setPremiumExpiresAt(cachedUser.premiumExpiresAt);
+        setPurchasedCourses(cachedUser.purchasedCourses || []);
+        setHasOnlineClassAccess(cachedUser.hasOnlineClassAccess || false);
+        setIsBlocked(false);
+      } else {
+        if (currentUser.email === "maqsadjon@gmail.com") setIsAdmin(true);
+        setIsPremium(false);
+        setPurchasedCourses([]);
+        setHasOnlineClassAccess(false);
+        setIsBlocked(false);
+      }
     }
-  };
+  }, []);
+
   useEffect(() => {
-    let unsubscribeSnapshot: () => void;
-    const unsubscribeAuth = onAuthStateChanged(auth, async (currentUser) => {
-      if (currentUser) {
-        await fetchUserData(currentUser);
-        if (!isBlocked) {
+    let unsubscribeSnapshot: (() => void) | undefined;
+    let unsubscribeAuth: (() => void) | undefined;
+    let snapshotStarted = false;
+
+    const setupAuthListener = () => {
+      unsubscribeAuth = onAuthStateChanged(auth, async (currentUser) => {
+        if (currentUser) {
+          await fetchUserData(currentUser);
           setUser(currentUser);
-          unsubscribeSnapshot = onSnapshot(
-            doc(db, "users", currentUser.uid),
-            async (docSnap) => {
-              if (docSnap.exists()) {
+          
+          if (!snapshotStarted) {
+            snapshotStarted = true;
+            unsubscribeSnapshot = onSnapshot(
+              doc(db, "users", currentUser.uid),
+              async (docSnap) => {
+                if (!docSnap.exists()) return;
                 const data = docSnap.data();
                 if (data.isBlocked) {
-                  signOut(auth);
+                  await signOut(auth);
                   setUser(null);
                   setIsBlocked(true);
+                  setIsAdmin(false);
+                  setIsTeacher(false);
                   toast.error("Sizning hisobingiz bloklandi.", {
-                    style: {
-                      background: "#fee2e2",
-                      color: "#991b1b",
-                      border: "1px solid #f87171",
-                    },
+                    style: { background: "#fee2e2", color: "#991b1b", border: "1px solid #f87171" },
                   });
                 } else {
                   setIsBlocked(false);
                   setIsTeacher(data.isTeacher === true);
                   let currentPremiumStatus = data.isPremium || false;
                   if (currentPremiumStatus && data.premiumExpiresAt) {
-                    const isExpired = await checkPremiumExpiration(
-                      currentUser.uid,
-                      data.premiumExpiresAt,
-                    );
-                    if (isExpired) currentPremiumStatus = false;
+                    try {
+                      const isExpired = await checkPremiumExpiration(currentUser.uid, data.premiumExpiresAt);
+                      if (isExpired) currentPremiumStatus = false;
+                    } catch (e) {
+                      console.warn("Error checking premium expiration:", e);
+                    }
                   }
                   setIsPremium(currentPremiumStatus);
                   setPremiumExpiresAt(data.premiumExpiresAt || null);
                   setPurchasedCourses(data.purchasedCourses || []);
                   setHasOnlineClassAccess(data.hasOnlineClassAccess || false);
                 }
+              },
+              (error) => {
+                console.warn("Snapshot error (likely quota exceeded):", error);
               }
-            },
-          );
+            );
+          }
+        } else {
+          setUser(null);
+          setIsAdmin(false);
+          setIsTeacher(false);
+          setIsPremium(false);
+          setPurchasedCourses([]);
+          setHasOnlineClassAccess(false);
+          setUserProgress({});
+          setIsBlocked(false);
+          snapshotStarted = false;
+          if (unsubscribeSnapshot) {
+            unsubscribeSnapshot();
+            unsubscribeSnapshot = undefined;
+          }
         }
-      } else {
-        setUser(null);
-        setIsAdmin(false);
-        setIsTeacher(false);
-        setIsPremium(false);
-        setPurchasedCourses([]);
-        setHasOnlineClassAccess(false);
-        setUserProgress({});
-      }
-      setLoading(false);
-    });
+        setLoading(false);
+        setInitialCheckDone(true);
+      });
+    };
+
+    setupAuthListener();
+    
     return () => {
-      unsubscribeAuth();
+      if (unsubscribeAuth) unsubscribeAuth();
       if (unsubscribeSnapshot) unsubscribeSnapshot();
     };
-  }, []);
-  const refreshUserData = async () => {
+  }, [fetchUserData]);
+
+  const refreshUserData = useCallback(async () => {
     if (user) await fetchUserData(user);
-  };
+  }, [user, fetchUserData]);
+
   const login = async () => {
     try {
       const res = await signInWithPopup(auth, googleProvider);
       await fetchUserData(res.user);
-      if (!isBlocked) toast.success("Muvaffaqiyatli kirdingiz");
+      toast.success("Muvaffaqiyatli kirdingiz");
     } catch (error: any) {
       console.error(error);
       if (error.code === "auth/unauthorized-domain") {
-        toast.error(
-          "Google login uchun domenni Firebase Console da ruxsat bering.",
-        );
-      } else if (
-        error.code !== "auth/popup-closed-by-user" &&
-        error.code !== "auth/cancelled-popup-request"
-      ) {
+        toast.error("Google login uchun domenni Firebase Console da ruxsat bering.");
+      } else if (error.code !== "auth/popup-closed-by-user" && error.code !== "auth/cancelled-popup-request") {
         toast.error("Google orqali kirishda xatolik yuz berdi");
       }
       throw error;
     }
   };
+
   const loginWithEmail = async (email: string, pass: string) => {
     try {
       const res = await signInWithEmailAndPassword(auth, email, pass);
       await fetchUserData(res.user);
-      if (!isBlocked) toast.success("Muvaffaqiyatli kirdingiz");
+      toast.success("Muvaffaqiyatli kirdingiz");
     } catch (error: any) {
       console.error(error);
-      if (
-        error.code === "auth/user-not-found" ||
-        error.code === "auth/invalid-credential"
-      ) {
+      if (error.code === "auth/user-not-found" || error.code === "auth/invalid-credential") {
         toast.error("Email yoki parol noto'g'ri.");
       } else {
         toast.error("Tizimga kirishda xatolik yuz berdi.");
@@ -258,20 +271,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       throw error;
     }
   };
-  const registerWithEmail = async (
-    email: string,
-    pass: string,
-    name: string,
-  ) => {
+
+  const registerWithEmail = async (email: string, pass: string, name: string) => {
     try {
-      const userCredential = await createUserWithEmailAndPassword(
-        auth,
-        email,
-        pass,
-      );
-      await updateProfile(userCredential.user, {
-        displayName: name,
-      });
+      const userCredential = await createUserWithEmailAndPassword(auth, email, pass);
+      await updateProfile(userCredential.user, { displayName: name });
       await setDoc(doc(db, "users", userCredential.user.uid), {
         email: email,
         displayName: name,
@@ -291,35 +295,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       toast.success("Muvaffaqiyatli ro'yxatdan o'tdingiz");
     } catch (error: any) {
       console.error(error);
-      if (error.code === "auth/email-already-in-use")
-        toast.error("Bu email allaqachon ro'yxatdan o'tgan");
-      else if (error.code === "auth/weak-password")
-        toast.error("Parol kamida 6 ta belgidan iborat bo'lishi kerak");
+      if (error.code === "auth/email-already-in-use") toast.error("Bu email allaqachon ro'yxatdan o'tgan");
+      else if (error.code === "auth/weak-password") toast.error("Parol kamida 6 ta belgidan iborat bo'lishi kerak");
       else toast.error("Ro'yxatdan o'tishda xatolik");
       throw error;
     }
   };
-  const updateAdminCredentials = async (
-    currentPassword: string,
-    newEmail?: string,
-    newPassword?: string,
-  ) => {
+
+  const updateAdminCredentials = async (currentPassword: string, newEmail?: string, newPassword?: string) => {
     if (!user || !user.email) throw new Error("Foydalanuvchi topilmadi");
     try {
-      const credential = EmailAuthProvider.credential(
-        user.email,
-        currentPassword,
-      );
+      const credential = EmailAuthProvider.credential(user.email, currentPassword);
       await reauthenticateWithCredential(user, credential);
       if (newEmail && newEmail !== user.email) {
         await updateEmail(user, newEmail);
-        await updateDoc(doc(db, "users", user.uid), {
-          email: newEmail,
-        });
+        await updateDoc(doc(db, "users", user.uid), { email: newEmail });
       }
-      if (newPassword) {
-        await updatePassword(user, newPassword);
-      }
+      if (newPassword) await updatePassword(user, newPassword);
       await auth.currentUser?.reload();
       setUser(auth.currentUser);
       toast.success("Ma'lumotlar muvaffaqiyatli yangilandi");
@@ -328,6 +320,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       throw new Error("Xatolik yuz berdi: " + error.message);
     }
   };
+
   const logout = async () => {
     try {
       await signOut(auth);
@@ -336,6 +329,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       toast.error("Chiqishda xatolik yuz berdi");
     }
   };
+
   return (
     <AuthContext.Provider
       value={{
@@ -361,9 +355,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     </AuthContext.Provider>
   );
 }
+
 export const useAuth = () => {
   const context = useContext(AuthContext);
-  if (context === undefined)
-    throw new Error("useAuth must be used within an AuthProvider");
+  if (context === undefined) throw new Error("useAuth must be used within an AuthProvider");
   return context;
 };

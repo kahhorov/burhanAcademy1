@@ -3,12 +3,14 @@ import { Crown } from "lucide-react";
 import { doc, setDoc, getDoc } from "firebase/firestore";
 import { db } from "../../lib/firebase";
 import { toast } from "sonner";
+import { useTranslation } from "react-i18next";
 
 interface AdminPremiumProps {
   users: any[];
 }
 
 export function AdminPremium({ users }: AdminPremiumProps) {
+  const { t } = useTranslation();
   const [settings, setSettings] = useState({
     monthlyPrice: 150000,
     yearlyPrice: 1500000,
@@ -43,7 +45,7 @@ export function AdminPremium({ users }: AdminPremiumProps) {
   const premiumUsers = users.filter((u) => u.isPremium);
 
   const formatDate = (timestamp: any) => {
-    if (!timestamp) return "Muddatsiz";
+    if (!timestamp) return t("unlimited");
     const date = timestamp.toDate ? timestamp.toDate() : new Date(timestamp);
     return date.toLocaleDateString("uz-UZ", {
       year: "numeric",
@@ -55,7 +57,7 @@ export function AdminPremium({ users }: AdminPremiumProps) {
   return (
     <div className="max-w-2xl">
       <h2 className="text-xl font-bold text-gray-900 dark:text-white mb-6">
-        Premium Ta'rif Sozlamalari
+        {t("premium_settings")}
       </h2>
 
       <div className="bg-amber-50 dark:bg-amber-900/10 border border-amber-200 dark:border-amber-900/30 rounded-2xl p-6 mb-8">
@@ -63,7 +65,7 @@ export function AdminPremium({ users }: AdminPremiumProps) {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                Oylik narx (so'm)
+                {t("monthly_price")}
               </label>
               <input
                 type="number"
@@ -79,7 +81,7 @@ export function AdminPremium({ users }: AdminPremiumProps) {
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                Yillik narx (so'm)
+                {t("yearly_price")}
               </label>
               <input
                 type="number"
@@ -111,20 +113,20 @@ export function AdminPremium({ users }: AdminPremiumProps) {
               htmlFor="isActive"
               className="text-sm font-medium text-gray-700 dark:text-gray-300"
             >
-              Premium ta'rif faol
+              {t("premium_active")}
             </label>
           </div>
           <button
             onClick={handleSave}
             className="px-6 py-2.5 bg-amber-500 hover:bg-amber-600 text-white rounded-xl font-medium transition-colors mt-2"
           >
-            Saqlash
+            {t("save")}
           </button>
         </div>
       </div>
 
       <h3 className="text-lg font-bold text-gray-900 dark:text-white mb-4">
-        Premium obunachilar ro'yxati ({premiumUsers.length})
+        {t("premium_subscribers")} ({premiumUsers.length})
       </h3>
       <div className="space-y-3">
         {premiumUsers.map((u) => (
@@ -145,14 +147,14 @@ export function AdminPremium({ users }: AdminPremiumProps) {
             </div>
             <div className="text-right">
               <p className="text-xs text-gray-500">
-                Reja:{" "}
+                {t("plan")}:{" "}
                 {u.premiumPlanType === "yearly"
-                  ? "Yillik"
+                  ? t("yearly_plan")
                   : u.premiumPlanType === "monthly"
-                    ? "Oylik"
-                    : "Nomaʼlum"}
+                    ? t("monthly_plan")
+                    : t("unlimited")}
               </p>
-              <p className="text-xs text-gray-500">Tugash sanasi</p>
+              <p className="text-xs text-gray-500">{t("expiry_date_label")}</p>
               <p className="text-sm font-medium text-gray-900 dark:text-white">
                 {formatDate(u.premiumExpiresAt)}
               </p>
@@ -166,7 +168,7 @@ export function AdminPremium({ users }: AdminPremiumProps) {
         ))}
         {premiumUsers.length === 0 && (
           <p className="text-gray-500 text-center py-4">
-            Premium obunachilar yo'q
+            {t("no_premium_users")}
           </p>
         )}
       </div>

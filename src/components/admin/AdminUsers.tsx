@@ -10,6 +10,7 @@ import {
   Radio,
   ShieldAlert,
 } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import {
   doc,
   updateDoc,
@@ -29,6 +30,7 @@ interface AdminUsersProps {
 }
 
 export function AdminUsers({ users, courses, fetchData }: AdminUsersProps) {
+  const { t } = useTranslation();
   const [searchTerm, setSearchTerm] = useState("");
   const [currentPage, setCurrentPage] = useState(1);
   const [assignModalOpen, setAssignModalOpen] = useState(false);
@@ -105,48 +107,44 @@ export function AdminUsers({ users, courses, fetchData }: AdminUsersProps) {
       });
       toast.success(
         currentStatus
-          ? "Foydalanuvchi blokdan chiqarildi"
-          : "Foydalanuvchi bloklandi",
+          ? t("user_unblocked")
+          : t("user_blocked"),
       );
       fetchData();
     } catch (error) {
-      toast.error("Xatolik yuz berdi");
+      toast.error(t("error_occurred"));
     }
   };
 
   // Premiumni olib tashlash (faqat isPremium false qiladi, summa saqlanadi)
   const revokePremium = async (userId: string) => {
-    if (!window.confirm("Premiumni olib tashlashni tasdiqlaysizmi?")) return;
+    if (!window.confirm(t("delete_confirm"))) return;
     try {
       await updateDoc(doc(db, "users", userId), {
         isPremium: false,
         premiumExpiresAt: null,
-        // premiumPurchasePrice va premiumPlanType saqlanadi (tushum uchun)
       });
-      toast.success("Premium tarif olib tashlandi");
+      toast.success(t("premium_revoked"));
       fetchData();
     } catch (error) {
-      toast.error("Xatolik yuz berdi");
+      toast.error(t("error_occurred"));
     }
   };
 
   // Online dars ruxsatini olib tashlash
   const revokeOnlineClass = async (userId: string) => {
     if (
-      !window.confirm("Online dars ruxsatini olib tashlashni tasdiqlaysizmi?")
+      !window.confirm(t("delete_confirm"))
     )
       return;
     try {
       await updateDoc(doc(db, "users", userId), {
         hasOnlineClassAccess: false,
-        // Ixtiyoriy: onlineClassPurchasePrice va onlineClassPurchasedAt ni saqlab qolish
-        // onlineClassPurchasePrice: deleteField(),
-        // onlineClassPurchasedAt: deleteField(),
       });
-      toast.success("Online dars ruxsati olib tashlandi");
+      toast.success(t("online_class_revoked"));
       fetchData();
     } catch (error) {
-      toast.error("Xatolik yuz berdi");
+      toast.error(t("error_occurred"));
     }
   };
 
@@ -181,12 +179,12 @@ export function AdminUsers({ users, courses, fetchData }: AdminUsersProps) {
         premiumPurchasedAt: serverTimestamp(),
       });
       toast.success(
-        `Premium berildi (${selectedPlan === "monthly" ? "oylik" : "yillik"})`,
+        t("premium_granted"),
       );
       setPremiumModal(null);
       fetchData();
     } catch (error) {
-      toast.error("Xatolik yuz berdi");
+      toast.error(t("error_occurred"));
     } finally {
       setLoadingGrant(false);
     }
@@ -205,18 +203,18 @@ export function AdminUsers({ users, courses, fetchData }: AdminUsersProps) {
     const { user } = onlineClassModal;
     try {
       const expiresAt = new Date();
-      expiresAt.setMonth(expiresAt.getMonth() + 1); // 1 oylik muddat
+      expiresAt.setMonth(expiresAt.getMonth() + 1);
       await updateDoc(doc(db, "users", user.id), {
         hasOnlineClassAccess: true,
         onlineClassPurchasePrice: onlineClassPrice,
         onlineClassPurchasedAt: serverTimestamp(),
         onlineClassExpiresAt: expiresAt,
       });
-      toast.success("Online dars ruxsati berildi");
+      toast.success(t("online_class_granted"));
       setOnlineClassModal(null);
       fetchData();
     } catch (error) {
-      toast.error("Xatolik yuz berdi");
+      toast.error(t("error_occurred"));
     } finally {
       setLoadingGrant(false);
     }
@@ -235,24 +233,24 @@ export function AdminUsers({ users, courses, fetchData }: AdminUsersProps) {
       await updateDoc(doc(db, "users", selectedUser.id), {
         purchasedCourses: arrayUnion(selectedCourseId),
       });
-      toast.success("Kurs muvaffaqiyatli biriktirildi");
+      toast.success(t("course_assigned"));
       setSelectedCourseId("");
       fetchData();
     } catch (error) {
-      toast.error("Xatolik yuz berdi");
+      toast.error(t("error_occurred"));
     }
   };
 
   const handleRevokeCourse = async (userId: string, courseId: string) => {
-    if (!window.confirm("Kursni olib tashlashni tasdiqlaysizmi?")) return;
+    if (!window.confirm(t("delete_confirm"))) return;
     try {
       await updateDoc(doc(db, "users", userId), {
         purchasedCourses: arrayRemove(courseId),
       });
-      toast.success("Kurs olib tashlandi");
+      toast.success(t("course_removed"));
       fetchData();
     } catch (error) {
-      toast.error("Xatolik yuz berdi");
+      toast.error(t("error_occurred"));
     }
   };
 
@@ -262,13 +260,13 @@ export function AdminUsers({ users, courses, fetchData }: AdminUsersProps) {
     <div>
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">
         <h2 className="text-xl font-bold text-gray-900 dark:text-white">
-          Foydalanuvchilar ({filteredUsers.length})
+          {t("users_count")} ({filteredUsers.length})
         </h2>
         <div className="relative w-full sm:w-64">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
           <input
             type="text"
-            placeholder="Qidirish..."
+            placeholder={t("search")}
             value={searchTerm}
             onChange={(e) => {
               setSearchTerm(e.target.value);
@@ -283,10 +281,10 @@ export function AdminUsers({ users, courses, fetchData }: AdminUsersProps) {
         <table className="w-full text-left border-collapse">
           <thead>
             <tr className="border-b border-gray-200 dark:border-gray-800 text-sm text-gray-500 dark:text-gray-400 bg-gray-50 dark:bg-gray-900/50">
-              <th className="p-4 font-medium">Foydalanuvchi</th>
+              <th className="p-4 font-medium">{t("users")}</th>
               <th className="p-4 font-medium">Email</th>
-              <th className="p-4 font-medium">Holati</th>
-              <th className="p-4 font-medium text-right">Amallar</th>
+              <th className="p-4 font-medium">{t("status")}</th>
+              <th className="p-4 font-medium text-right">{t("actions")}</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
@@ -314,7 +312,7 @@ export function AdminUsers({ users, courses, fetchData }: AdminUsersProps) {
                   <div className="flex flex-wrap gap-2">
                     {u.isBlocked ? (
                       <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400">
-                        Bloklangan
+                        {t("block")}
                       </span>
                     ) : u.isPremium ? (
                       <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-400">
@@ -322,12 +320,12 @@ export function AdminUsers({ users, courses, fetchData }: AdminUsersProps) {
                       </span>
                     ) : (
                       <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-300">
-                        Oddiy
+                        {t("free")}
                       </span>
                     )}
                     {u.hasOnlineClassAccess && (
                       <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400">
-                        Online Dars
+                        {t("online_class")}
                       </span>
                     )}
                   </div>
@@ -357,7 +355,6 @@ export function AdminUsers({ users, courses, fetchData }: AdminUsersProps) {
                   <div className="flex justify-end gap-2">
                     {!u.isBlocked && (
                       <>
-                        {/* Online dars ruxsati berish (faqat pullik bo'lsa) */}
                         <button
                           onClick={() => handleGrantOnlineClass(u)}
                           disabled={!onlineClassSettings.isPaid}
@@ -372,30 +369,28 @@ export function AdminUsers({ users, courses, fetchData }: AdminUsersProps) {
                           }`}
                           title={
                             onlineClassSettings.isPaid
-                              ? "Online dars ruxsati berish"
-                              : "Online dars bepul, ruxsat berish kerak emas"
+                              ? t("online_class_access")
+                              : t("online_class")
                           }
                         >
                           <Radio className="w-4 h-4" />
                         </button>
 
-                        {/* Online dars ruxsatini olib tashlash (faqat mavjud bo'lsa) */}
                         {u.hasOnlineClassAccess && (
                           <button
                             onClick={() => revokeOnlineClass(u.id)}
                             className="p-2 text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg"
-                            title="Online dars ruxsatini olib tashlash"
+                            title={t("online_class_revoked")}
                           >
                             <MinusCircle className="w-4 h-4" />
                           </button>
                         )}
 
-                        {/* Premium berish / olib tashlash */}
                         {u.isPremium ? (
                           <button
                             onClick={() => revokePremium(u.id)}
                             className="p-2 text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg"
-                            title="Premiumni olib tashlash"
+                            title={t("premium_revoked")}
                           >
                             <MinusCircle className="w-4 h-4" />
                           </button>
@@ -403,17 +398,16 @@ export function AdminUsers({ users, courses, fetchData }: AdminUsersProps) {
                           <button
                             onClick={() => handleGrantPremium(u)}
                             className="p-2 text-amber-600 hover:bg-amber-50 dark:hover:bg-amber-900/20 rounded-lg"
-                            title="Premium berish"
+                            title={t("premium_granted")}
                           >
                             <Crown className="w-4 h-4" />
                           </button>
                         )}
 
-                        {/* Kurs biriktirish */}
                         <button
                           onClick={() => openAssignModal(u)}
                           className="p-2 text-teal-600 hover:bg-teal-50 dark:hover:bg-teal-900/20 rounded-lg"
-                          title="Kurs berish"
+                          title={t("assign_course")}
                         >
                           <BookOpen className="w-4 h-4" />
                         </button>
@@ -426,7 +420,7 @@ export function AdminUsers({ users, courses, fetchData }: AdminUsersProps) {
                           ? "text-green-600 hover:bg-green-50 dark:hover:bg-green-900/20"
                           : "text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20"
                       }`}
-                      title={u.isBlocked ? "Blokdan chiqarish" : "Bloklash"}
+                      title={u.isBlocked ? t("unblock") : t("block")}
                     >
                       <Ban className="w-4 h-4" />
                     </button>
@@ -440,7 +434,7 @@ export function AdminUsers({ users, courses, fetchData }: AdminUsersProps) {
                   colSpan={4}
                   className="p-8 text-center text-gray-500 dark:text-gray-400"
                 >
-                  Foydalanuvchilar topilmadi
+                  {t("no_users_found")}
                 </td>
               </tr>
             )}
@@ -486,7 +480,7 @@ export function AdminUsers({ users, courses, fetchData }: AdminUsersProps) {
             >
               <div className="flex justify-between items-center mb-4">
                 <h3 className="text-xl font-bold text-gray-900 dark:text-white">
-                  Kurs biriktirish
+                  {t("assign_course")}
                 </h3>
                 <button
                   onClick={() => setAssignModalOpen(false)}
@@ -497,7 +491,7 @@ export function AdminUsers({ users, courses, fetchData }: AdminUsersProps) {
               </div>
               <div className="mb-4">
                 <p className="text-sm text-gray-500 dark:text-gray-400 mb-1">
-                  Foydalanuvchi:
+                  {t("users")}:
                 </p>
                 <p className="font-medium text-gray-900 dark:text-white">
                   {selectedUser.displayName || selectedUser.email}
@@ -505,14 +499,14 @@ export function AdminUsers({ users, courses, fetchData }: AdminUsersProps) {
               </div>
               <div className="mb-6">
                 <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                  Kursni tanlang (faqat pullik kurslar)
+                  {t("select_course")}
                 </label>
                 <select
                   className="w-full p-3 border border-gray-200 dark:border-gray-700 rounded-xl bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-white outline-none focus:ring-2 focus:ring-teal-600"
                   value={selectedCourseId}
                   onChange={(e) => setSelectedCourseId(e.target.value)}
                 >
-                  <option value="">Tanlang...</option>
+                  <option value="">{t("search")}</option>
                   {paidCourses.map((c) => (
                     <option
                       key={c.id}
@@ -521,7 +515,7 @@ export function AdminUsers({ users, courses, fetchData }: AdminUsersProps) {
                     >
                       {c.title}{" "}
                       {selectedUser.purchasedCourses?.includes(c.id)
-                        ? "(Olingan)"
+                        ? t("already_owned")
                         : ""}
                     </option>
                   ))}
@@ -540,7 +534,7 @@ export function AdminUsers({ users, courses, fetchData }: AdminUsersProps) {
                 disabled={!selectedCourseId}
                 className="w-full py-3 bg-teal-600 hover:bg-teal-700 text-white rounded-xl font-medium disabled:opacity-50 transition-colors"
               >
-                Berish
+                {t("give")}
               </button>
             </motion.div>
           </motion.div>
@@ -567,7 +561,7 @@ export function AdminUsers({ users, courses, fetchData }: AdminUsersProps) {
             >
               <div className="flex justify-between items-center mb-4">
                 <h3 className="text-xl font-bold text-gray-900 dark:text-white">
-                  Premium berish
+                  {t("premium_granted")}
                 </h3>
                 <button
                   onClick={() => setPremiumModal(null)}
@@ -578,7 +572,7 @@ export function AdminUsers({ users, courses, fetchData }: AdminUsersProps) {
               </div>
               <div className="mb-4">
                 <p className="text-sm text-gray-500 dark:text-gray-400 mb-1">
-                  Foydalanuvchi:
+                  {t("users")}:
                 </p>
                 <p className="font-medium text-gray-900 dark:text-white">
                   {premiumModal.user.displayName || premiumModal.user.email}
@@ -586,7 +580,7 @@ export function AdminUsers({ users, courses, fetchData }: AdminUsersProps) {
               </div>
               <div className="mb-6">
                 <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                  Rejani tanlang
+                  {t("select_plan")}
                 </label>
                 <div className="flex gap-4">
                   <label className="flex items-center gap-2 cursor-pointer">
@@ -627,7 +621,7 @@ export function AdminUsers({ users, courses, fetchData }: AdminUsersProps) {
                 {loadingGrant ? (
                   <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
                 ) : (
-                  "Berish"
+                  t("give")
                 )}
               </button>
             </motion.div>
@@ -655,7 +649,7 @@ export function AdminUsers({ users, courses, fetchData }: AdminUsersProps) {
             >
               <div className="flex justify-between items-center mb-4">
                 <h3 className="text-xl font-bold text-gray-900 dark:text-white">
-                  Online dars ruxsati
+                  {t("online_class_access")}
                 </h3>
                 <button
                   onClick={() => setOnlineClassModal(null)}
@@ -666,7 +660,7 @@ export function AdminUsers({ users, courses, fetchData }: AdminUsersProps) {
               </div>
               <div className="mb-4">
                 <p className="text-sm text-gray-500 dark:text-gray-400 mb-1">
-                  Foydalanuvchi:
+                  {t("users")}:
                 </p>
                 <p className="font-medium text-gray-900 dark:text-white">
                   {onlineClassModal.user.displayName ||
@@ -675,7 +669,7 @@ export function AdminUsers({ users, courses, fetchData }: AdminUsersProps) {
               </div>
               <div className="mb-6">
                 <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                  To'lov summasi (so'm)
+                  {t("payment_amount")}
                 </label>
                 <input
                   type="number"
@@ -684,7 +678,7 @@ export function AdminUsers({ users, courses, fetchData }: AdminUsersProps) {
                   className="w-full p-3 border border-gray-200 dark:border-gray-700 rounded-xl bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-white outline-none focus:ring-2 focus:ring-teal-600"
                 />
                 <p className="text-xs text-gray-500 mt-1">
-                  Joriy narx: {onlineClassSettings.price.toLocaleString()} so'm
+                  {t("current_price")}: {onlineClassSettings.price.toLocaleString()} so'm
                 </p>
               </div>
               <button
@@ -695,7 +689,7 @@ export function AdminUsers({ users, courses, fetchData }: AdminUsersProps) {
                 {loadingGrant ? (
                   <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
                 ) : (
-                  "Ruxsat berish"
+                  t("give_access")
                 )}
               </button>
             </motion.div>

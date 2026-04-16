@@ -109,7 +109,7 @@ export function Layout() {
               {isOnlineClassActive && (
                 <div className="absolute -top-3 -right-2 flex items-center gap-1 bg-red-500 text-white px-2 py-0.5 rounded-full text-[10px] font-bold uppercase animate-pulse shadow-lg shadow-red-500/50">
                   <Radio className="w-3 h-3" />
-                  Jonli
+                  {t("join_live")}
                 </div>
               )}
             </nav>
@@ -126,7 +126,7 @@ export function Layout() {
                     onClick={() => i18n.changeLanguage("uz")}
                     className={`w-full text-left px-4 py-2 text-sm hover:bg-gray-50 dark:hover:bg-gray-700 ${i18n.language === "uz" ? "text-teal-600 dark:text-teal-400 font-medium" : "text-gray-700 dark:text-gray-300"}`}
                   >
-                    O'zbekcha
+                    Uzbekcha
                   </button>
                   <button
                     onClick={() => i18n.changeLanguage("ru")}
@@ -194,7 +194,7 @@ export function Layout() {
               {isOnlineClassActive && (
                 <div className="flex items-center gap-1 bg-red-500 text-white px-2 py-0.5 rounded-full text-[10px] font-bold uppercase animate-pulse shadow-lg shadow-red-500/50">
                   <Radio className="w-3 h-3" />
-                  Jonli
+                  {t("join_live")}
                 </div>
               )}
               <button
@@ -248,7 +248,7 @@ export function Layout() {
               <div className="border-t border-gray-100 dark:border-gray-800 pt-4 mt-4">
                 <div className="px-4 py-2 mb-2">
                   <label className="text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wider">
-                    Tilni tanlang
+                    {t("language")}
                   </label>
                   <div className="flex gap-2 mt-2">
                     <button
@@ -341,17 +341,16 @@ export function Layout() {
                       ع
                     </div>
                     <h2 className="font-bold text-xl text-gray-900 dark:text-white">
-                      Arabiy
+                      Burhan Academy
                     </h2>
                   </div>
                   <p className="text-sm text-gray-500 dark:text-gray-400 leading-relaxed">
-                    Arab tilini zamonaviy usulda o'rganish uchun eng yaxshi
-                    platforma.
+                    {t("footer_arabic")}
                   </p>
                 </div>
                 <div>
                   <h3 className="font-bold text-gray-900 dark:text-white mb-4">
-                    Tezkor havolalar
+                    {t("quick_links")}
                   </h3>
                   <ul className="space-y-2 text-sm">
                     <li>
@@ -359,7 +358,7 @@ export function Layout() {
                         to="/"
                         className="hover:text-teal-600 dark:hover:text-teal-400 transition-colors"
                       >
-                        Bosh sahifa
+                        {t("home")}
                       </Link>
                     </li>
                     <li>
@@ -367,7 +366,7 @@ export function Layout() {
                         to="/courses"
                         className="hover:text-teal-600 dark:hover:text-teal-400 transition-colors"
                       >
-                        Kurslar
+                        {t("courses")}
                       </Link>
                     </li>
                     <li>
@@ -375,7 +374,7 @@ export function Layout() {
                         to="/free-courses"
                         className="hover:text-teal-600 dark:hover:text-teal-400 transition-colors"
                       >
-                        Demo darslar
+                        {t("demo_courses")}
                       </Link>
                     </li>
                     <li>
@@ -383,14 +382,14 @@ export function Layout() {
                         to="/teachers"
                         className="hover:text-teal-600 dark:hover:text-teal-400 transition-colors"
                       >
-                        O'qituvchilar
+                        {t("teachers")}
                       </Link>
                     </li>
                   </ul>
                 </div>
                 <div>
                   <h3 className="font-bold text-gray-900 dark:text-white mb-4">
-                    Kurslar
+                    {t("courses_title")}
                   </h3>
                   <ul className="space-y-2 text-sm">
                     <li>
@@ -398,7 +397,7 @@ export function Layout() {
                         to="/courses?level=beginner"
                         className="hover:text-teal-600 dark:hover:text-teal-400 transition-colors"
                       >
-                        Arab alifbosi
+                        {t("arab_alphabet")}
                       </Link>
                     </li>
                     <li>
@@ -406,7 +405,7 @@ export function Layout() {
                         to="/courses?level=intermediate"
                         className="hover:text-teal-600 dark:hover:text-teal-400 transition-colors"
                       >
-                        Grammatika asoslari
+                        {t("grammar_basics")}
                       </Link>
                     </li>
                     <li>
@@ -414,14 +413,14 @@ export function Layout() {
                         to="/courses?level=advanced"
                         className="hover:text-teal-600 dark:hover:text-teal-400 transition-colors"
                       >
-                        Ravon gapirish
+                        {t("fluent_speaking")}
                       </Link>
                     </li>
                   </ul>
                 </div>
                 <div>
                   <h3 className="font-bold text-gray-900 dark:text-white mb-4">
-                    Aloqa
+                    {t("contact")}
                   </h3>
                   <ul className="space-y-3 text-sm">
                     <li className="flex items-center gap-2">
@@ -440,14 +439,13 @@ export function Layout() {
                       <span className="text-teal-600 dark:text-teal-400">
                         📍
                       </span>{" "}
-                      Toshkent shahri
+                      {t("contact")}
                     </li>
                   </ul>
                 </div>
               </div>
               <div className="mt-12 pt-8 border-t border-gray-200 dark:border-gray-800 text-center text-sm text-gray-500 dark:text-gray-500">
-                © {new Date().getFullYear()} Burhan Academy. Barcha huquqlar
-                himoyalangan.
+                © {new Date().getFullYear()} Burhan Academy. {t("all_rights")}
               </div>
             </div>
           </footer>
